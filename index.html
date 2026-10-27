@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Umtimatefishing — Browser Fishing</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="top-bar">
+      <h1>Umtimatefishing</h1>
+      <div id="hud-summary">
+        <span id="currency-display" class="currency-display">$0</span>
+        <span id="catch-count">Catches: 0</span>
+        <span id="best-catch">Best: —</span>
+      </div>
+    </header>
+
+    <div id="ad-slot-top" class="ad-slot" data-ad-size="728x90">
+      <span class="ad-placeholder-label">Ad space (728x90)</span>
+    </div>
+
+    <main id="game-layout">
+      <div id="ad-slot-side" class="ad-slot ad-slot-vertical" data-ad-size="160x600">
+        <span class="ad-placeholder-label">Ad space (160x600)</span>
+      </div>
+
+      <div id="game-stage">
+        <canvas id="game-canvas" width="900" height="600"></canvas>
+        <div id="hud-overlay"></div>
+        <div id="menu-overlay" class="overlay"></div>
+      </div>
+    </main>
+
+    <div id="ad-slot-footer" class="ad-slot" data-ad-size="728x90">
+      <span class="ad-placeholder-label">Ad space (728x90)</span>
+    </div>
+
+    <footer id="bottom-bar">
+      <p>No account needed to play. Progress and gear are saved to this browser.</p>
+    </footer>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
