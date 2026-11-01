@@ -1,10 +1,9 @@
 // casting3d.js
 // Produces 3D world-space casting trajectories for the first-person rebuild.
 // World convention: meters; +X = right, +Y = up, -Z = straight out over the water.
-// Rod tip origin: (0.35, 1.05, -0.6). Water surface: y = 0.
+// Casts originate at ROD_TIP (constants.js). Water surface: y = 0.
 
-// --- Rod / world constants -------------------------------------------------
-const ROD_TIP = { x: 0.35, y: 1.05, z: -0.6 }; // where every cast originates
+import { ROD_TIP, HOME_POINT, HOME_RADIUS_M, MAX_RETRIEVE_S, MIN_RETRIEVE_SPEED_MPS } from './constants.js';
 
 // --- Power-meter tuning -----------------------------------------------------
 const POWER_CYCLE_PERIOD_SEC = 1.4; // seconds for one full 0 -> 1 -> 0 oscillation while charging
@@ -120,4 +119,29 @@ export class CastController {
       trajectoryFn,
     };
   }
+}
+
+// --- Free retrieve -----------------------------------------------------------
+
+function horizontalDistanceToHome(pos) {
+  return Math.hypot(pos.x - HOME_POINT.x, pos.z - HOME_POINT.z);
+}
+
+// A lure cut off right after release can still be over the dock, shoreward of HOME_POINT.
+export function isLureHome(pos) {
+  return pos.z >= HOME_POINT.z || horizontalDistanceToHome(pos) <= HOME_RADIUS_M;
+}
+
+export function retrieveSpeedFor(pos) {
+  return Math.max(MIN_RETRIEVE_SPEED_MPS, horizontalDistanceToHome(pos) / MAX_RETRIEVE_S);
+}
+
+export function stepRetrieve(pos, speed, dt) {
+  const distance = horizontalDistanceToHome(pos);
+  const fraction = distance > 0 ? Math.min(1, (speed * dt) / distance) : 0;
+  return {
+    x: pos.x + (HOME_POINT.x - pos.x) * fraction,
+    y: 0,
+    z: pos.z + (HOME_POINT.z - pos.z) * fraction,
+  };
 }

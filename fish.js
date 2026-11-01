@@ -1,8 +1,10 @@
 // fish.js
 // Species data, bite spawning, and the HookedFish fight-simulation model for
-// Umtimatefishing. Fish are meant to feel like distinct living creatures: each
+// Ultimate Fishing. Fish are meant to feel like distinct living creatures: each
 // species has its own weight range, toughness, and "pullPattern" that drives
 // how its pull vector is generated frame to frame during the fight.
+
+import { BITE_DEADLINE_S, CATCH_TIME_LIMIT_S } from './constants.js';
 
 // ---------------------------------------------------------------------------
 // Species table
@@ -239,13 +241,11 @@ export function getSellPrice(species, weight) {
 // values stay meaningful as players upgrade to longer-casting rods.
 const MAX_CAST_DISTANCE_M = 130;
 
-// Scales the combined per-species weight into a believable per-frame
-// probability. Tuned so a well-placed cast into a species' preferred water
-// produces a bite roughly every several seconds once wait time has built up.
-const BITE_SCALE = 0.12;
-
-// How quickly bite probability ramps up with wait time. Larger = slower ramp.
-const WAIT_RAMP_SECONDS = 5;
+// Bites are a constant-rate random event: nothing for MIN_BITE_WAIT_S, then
+// BASE_BITE_RATE per second (times the lure's multiplier), typically landing
+// 3-8 seconds into the wait and guaranteed by BITE_DEADLINE_S.
+const MIN_BITE_WAIT_S = 1.5;
+const BASE_BITE_RATE = 0.2;
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -284,24 +284,19 @@ export function trySpawnBite(cast, waitElapsed, dt, lureStats) {
   const eligibleSpecies = FISH_SPECIES.filter((species) => species.rarityTier <= maxRarityTier);
   if (eligibleSpecies.length === 0) return null;
 
-  const distance = distanceProxy(cast);
-  // Smooth ramp from 0 toward 1 as wait time builds, so bites start rare and
-  // become increasingly likely the longer the lure sits still (tension of
-  // waiting), capping out rather than spiking instantly.
-  const waitFactor = 1 - Math.exp(-Math.max(0, waitElapsed) / WAIT_RAMP_SECONDS);
+  if (waitElapsed < MIN_BITE_WAIT_S) return null;
+  const deadlineReached = waitElapsed >= BITE_DEADLINE_S - dt;
+  if (!deadlineReached && Math.random() >= clamp01(BASE_BITE_RATE * biteRateMultiplier * dt)) {
+    return null;
+  }
 
+  const distance = distanceProxy(cast);
   const weights = eligibleSpecies.map((species) => {
     const match = distanceMatch(species.preferredDistance, distance);
-    const weight = species.biteChance * species.rarity * match * waitFactor;
+    const weight = species.biteChance * species.rarity * match;
     return { species, weight };
   });
-
   const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
-  if (totalWeight <= 0) return null;
-
-  // Probability that *some* fish bites this frame.
-  const biteProbability = clamp01(totalWeight * BITE_SCALE * dt * biteRateMultiplier);
-  if (Math.random() >= biteProbability) return null;
 
   // A bite happened: pick which species, weighted by their contribution.
   let roll = Math.random() * totalWeight;
@@ -327,10 +322,8 @@ const DRAIN_PRESSURE = 4.5; // extra drain scaled by how hard the player reels
 const LOW_PRESSURE_THRESHOLD = 0.12;
 const REGEN_RATE = 1.6; // stamina units/sec recovered while unpressured
 
-// How long (seconds) a fish can sit substantially unpressured, with stamina
-// still high, before it works itself free and escapes.
-const ESCAPE_NEGLECT_SECONDS = 7;
-const ESCAPE_STAMINA_FLOOR = 0.5;
+// A fish works itself free after this many consecutive seconds with no reeling.
+const REEL_IDLE_ESCAPE_S = 7;
 
 // Below this stamina fraction the fish is considered "tiring out" for UI
 // purposes.
@@ -341,13 +334,16 @@ function randomRange(min, max) {
 }
 
 export class HookedFish {
-  constructor(species) {
+  // budgetS: seconds this fight may last; stamina is capped on that same clock.
+  constructor(species, budgetS = CATCH_TIME_LIMIT_S) {
     this.species = species;
+    this.budgetS = budgetS;
+    this.fightElapsed = 0;
     this.weight = randomRange(species.minWeight, species.maxWeight);
     this.stamina = 1; // 0..1, full to empty
 
     this._escapedReported = false;
-    this._neglectTime = 0;
+    this._reelIdleTime = 0;
 
     // Internal pull-pattern state, shaped differently per pattern but kept
     // on one object so update() stays simple.
@@ -406,7 +402,7 @@ export class HookedFish {
             p.burstTimer = 0.3 + Math.random() * 0.4;
           }
         }
-        const mag = p.inBurst ? strength * 2.0 : strength * 0.2;
+        const mag = p.inBurst ? strength * 1.6 : strength * 0.2;
         return { x: Math.cos(p.angle) * mag, y: Math.sin(p.angle) * mag };
       }
 
@@ -424,7 +420,7 @@ export class HookedFish {
     }
   }
 
-  update(dt, tensionState) {
+  update(dt, tensionState, reelInput = 0) {
     if (this._escapedReported) {
       // Already told the caller this fish got away; stay inert afterward.
       return { pullVector: { x: 0, y: 0 }, escaped: false };
@@ -435,21 +431,19 @@ export class HookedFish {
       : 0);
 
     if (tension < LOW_PRESSURE_THRESHOLD) {
-      // Neglected: the fish recovers stamina instead of tiring, and racks up
-      // time toward wriggling free entirely.
       this.stamina = Math.min(1, this.stamina + (REGEN_RATE * dt) / this.species.staminaMax);
-      this._neglectTime += dt;
     } else {
       // Under pressure: drains faster the harder the player reels, slower
       // for tougher (higher staminaMax) species.
       const drain = (DRAIN_BASE + DRAIN_PRESSURE * tension) * dt / this.species.staminaMax;
       this.stamina = Math.max(0, this.stamina - drain);
-      // Being pressured works the neglect clock back down rather than an
-      // instant reset, so a brief slack moment doesn't erase all risk.
-      this._neglectTime = Math.max(0, this._neglectTime - dt * 2);
     }
 
-    if (this._neglectTime >= ESCAPE_NEGLECT_SECONDS && this.stamina >= ESCAPE_STAMINA_FLOOR) {
+    this.fightElapsed += dt;
+    this.stamina = Math.min(this.stamina, Math.max(0, 1 - this.fightElapsed / this.budgetS));
+
+    this._reelIdleTime = reelInput ? 0 : this._reelIdleTime + dt;
+    if (this._reelIdleTime >= REEL_IDLE_ESCAPE_S) {
       this._escapedReported = true;
       return { pullVector: { x: 0, y: 0 }, escaped: true };
     }

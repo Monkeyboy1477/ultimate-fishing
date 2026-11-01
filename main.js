@@ -1,14 +1,15 @@
-// Umtimatefishing — core game loop and state machine.
+// Ultimate Fishing — core game loop and state machine.
 // This file is the integration point. It only orchestrates; the realism
 // (physics, fish AI, 3D rendering, UI) lives in the imported modules below,
 // each of which must conform to the API documented next to its import.
 
-import { CastController } from './casting3d.js';
-import { LineTensionSystem } from './tension.js';
+import { CastController, isLureHome, retrieveSpeedFor, stepRetrieve } from './casting3d.js';
+import { LineTensionSystem, fightTiming, stepFight } from './tension.js';
 import { FISH_SPECIES, trySpawnBite, HookedFish, getSellPrice } from './fish.js';
+import { HOME_POINT } from './constants.js';
 import { initScene, renderScene3D, spawnSplash3D } from './scene3d.js';
 import { renderHUD } from './render.js';
-import { initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay } from './ui.js';
+import { initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleShopButton } from './ui.js';
 import { createEconomy } from './economy.js';
 
 const canvas = document.getElementById('game-canvas');
@@ -21,6 +22,7 @@ const topBar = {
 };
 
 const economy = createEconomy();
+const idleShopButton = createIdleShopButton(document.getElementById('game-stage'), menuOverlay, economy);
 
 const STATE = {
   MENU: 'menu',
@@ -36,6 +38,11 @@ const game = {
   cast: null,          // result of CastController.release()
   castElapsed: 0,
   waitElapsed: 0,
+  sinceRelease: 0,      // seconds since the cast was released; the catch clock
+  lurePos: { ...HOME_POINT },
+  fightOrigin: null,    // where the fish was hooked; distanceRemaining 1 = here, 0 = HOME_POINT
+  retrieveSpeed: 0,
+  cutCast: false,       // Space pressed mid-flight: drop the lure where it is
   hookedFish: null,     // HookedFish instance
   tensionSystem: new LineTensionSystem(economy.getEquippedStats('line').breakThreshold),
   tensionState: { tension: 0, distanceRemaining: 1, broken: false, landed: false },
@@ -86,20 +93,55 @@ window.addEventListener('mouseup', () => {
   charging = false;
   game.cast = castController.release(aimAngleDeg);
   game.castElapsed = 0;
+  game.sinceRelease = 0;
+  game.cutCast = false;
   game.state = STATE.CAST_FLIGHT;
 });
 
-// Reel input: hold Space while fighting a fish.
+// Reel input: Space is tracked in every state, so a hold carries from retrieve into a fight.
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Space') return;
   e.preventDefault();
-  if (game.state === STATE.FIGHTING) game.reelInput = 1;
+  game.reelInput = 1;
+  if (game.state === STATE.CAST_FLIGHT && !e.repeat) game.cutCast = true;
 });
 window.addEventListener('keyup', (e) => {
   if (e.code !== 'Space') return;
   e.preventDefault();
   game.reelInput = 0;
 });
+window.addEventListener('blur', () => {
+  game.reelInput = 0;
+});
+
+function returnLureHome() {
+  game.hookedFish = null;
+  game.cast = null;
+  game.fightOrigin = null;
+  game.lurePos = { ...HOME_POINT };
+  game.state = STATE.MENU;
+}
+
+function lureEntersWater(point) {
+  if (isLureHome(point)) {
+    returnLureHome();
+    return;
+  }
+  game.lurePos = { x: point.x, y: 0, z: point.z };
+  game.cast = { ...game.cast, landingPoint: game.lurePos, landingDistance: -point.z };
+  spawnSplash3D(game.lurePos);
+  game.retrieveSpeed = retrieveSpeedFor(game.lurePos);
+  game.waitElapsed = 0;
+  game.state = STATE.WAITING_BITE;
+}
+
+function finishFight(result) {
+  game.lastResult = result;
+  game.state = STATE.RESULT;
+  game.fightOrigin = null;
+  game.lurePos = { ...HOME_POINT };
+  showCatchResult(menuOverlay, result);
+}
 
 // ---- Main loop --------------------------------------------------------------
 let lastTime = performance.now();
@@ -124,48 +166,51 @@ function update(dt) {
     }
     case STATE.CAST_FLIGHT: {
       game.castElapsed += dt;
-      if (game.castElapsed >= game.cast.flightDuration) {
-        spawnSplash3D(game.cast.landingPoint);
-        game.waitElapsed = 0;
-        game.state = STATE.WAITING_BITE;
+      game.sinceRelease += dt;
+      game.lurePos = game.cast.trajectoryFn(game.castElapsed);
+      if (game.cutCast) {
+        game.cutCast = false;
+        lureEntersWater(game.lurePos);
+      } else if (game.castElapsed >= game.cast.flightDuration) {
+        lureEntersWater(game.cast.landingPoint);
       }
       break;
     }
     case STATE.WAITING_BITE: {
+      game.sinceRelease += dt;
       game.waitElapsed += dt;
-      const bite = trySpawnBite(game.cast, game.waitElapsed, dt, economy.getEquippedStats('lure'));
+      if (game.reelInput) {
+        game.lurePos = stepRetrieve(game.lurePos, game.retrieveSpeed, dt);
+        if (isLureHome(game.lurePos)) {
+          returnLureHome();
+          break;
+        }
+      }
+      const lureDistance = -game.lurePos.z;
+      const bite = trySpawnBite({ landingDistance: lureDistance }, game.waitElapsed, dt, economy.getEquippedStats('lure'));
       if (bite) {
-        game.hookedFish = new HookedFish(bite);
-        game.tensionSystem = new LineTensionSystem(economy.getEquippedStats('line').breakThreshold);
+        const timing = fightTiming(bite, lureDistance, game.sinceRelease);
+        game.hookedFish = new HookedFish(bite, timing.budgetS);
+        game.tensionSystem = new LineTensionSystem(economy.getEquippedStats('line').breakThreshold, timing);
         game.tensionState = game.tensionSystem.update(0, { x: 0, y: 0 }, 0);
+        game.fightOrigin = { ...game.lurePos };
         game.state = STATE.FIGHTING;
       }
       break;
     }
     case STATE.FIGHTING: {
-      const fishUpdate = game.hookedFish.update(dt, game.tensionState);
-      game.tensionState = game.tensionSystem.update(
-        dt,
-        fishUpdate.pullVector,
-        game.reelInput
-      );
+      game.sinceRelease += dt;
+      const step = stepFight(game.hookedFish, game.tensionSystem, game.tensionState, dt, game.reelInput);
+      game.tensionState = step.tensionState;
 
-      if (game.tensionState.broken) {
-        game.lastResult = { caught: false, reason: 'line_snapped' };
-        game.state = STATE.RESULT;
-        showCatchResult(menuOverlay, game.lastResult);
-      } else if (fishUpdate.escaped) {
-        game.lastResult = { caught: false, reason: 'fish_escaped' };
-        game.state = STATE.RESULT;
-        showCatchResult(menuOverlay, game.lastResult);
-      } else if (game.tensionState.landed) {
+      if (step.outcome === 'line_snapped' || step.outcome === 'fish_escaped') {
+        finishFight({ caught: false, reason: step.outcome });
+      } else if (step.outcome === 'landed') {
         const species = game.hookedFish.species;
         const weight = game.hookedFish.weight;
         const sellPrice = getSellPrice(species, weight);
         const { earned, isRecord } = economy.recordCatch(species, weight, sellPrice);
-        game.lastResult = { caught: true, species, weight, isRecord, soldFor: earned };
-        game.state = STATE.RESULT;
-        showCatchResult(menuOverlay, game.lastResult);
+        finishFight({ caught: true, species, weight, isRecord, soldFor: earned });
       }
       break;
     }
@@ -187,6 +232,9 @@ function render() {
     hookedFish: game.hookedFish,
     tensionState: game.tensionState,
     time: elapsedTime,
+    lurePos: game.lurePos,
+    reeling: game.reelInput === 1 && (game.state === STATE.WAITING_BITE || game.state === STATE.FIGHTING),
+    fightOrigin: game.fightOrigin,
   });
 
   renderHUD(hudOverlay, {
@@ -195,6 +243,8 @@ function render() {
     tensionState: game.tensionState,
     hookedFish: game.hookedFish,
   });
+
+  idleShopButton.hidden = game.state !== STATE.MENU || menuOverlay.classList.contains('active');
 }
 
 initMenus(menuOverlay, {
@@ -202,9 +252,7 @@ initMenus(menuOverlay, {
     game.state = STATE.MENU;
   },
   onRestart: () => {
-    game.hookedFish = null;
-    game.cast = null;
-    game.state = STATE.MENU;
+    returnLureHome();
   },
 }, economy);
 

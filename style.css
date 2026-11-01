@@ -115,6 +115,8 @@ body {
 
 .hud-fight-panel { right: 4%; top: 4%; width: 34%; min-width: 150px; }
 
+.hud-reel-hint { left: 50%; bottom: 5%; transform: translateX(-50%); white-space: nowrap; }
+
 .hud-label { opacity: 0.85; }
 
 .hud-species-name { font-weight: 600; color: var(--color-ui-accent); }
@@ -290,3 +292,12 @@ body {
   padding: 6px 10px;
   font-size: 0.85rem;
 }
+
+.idle-shop-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(15, 32, 39, 0.75);
+}
+
+.idle-shop-button[hidden] { display: none; }

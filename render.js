@@ -1,4 +1,4 @@
-// Umtimatefishing — render.js
+// Ultimate Fishing — render.js
 // Canvas rendering (renderScene, spawnSplash) + DOM HUD overlay (renderHUD).
 // Pure presentation: reads game state handed in by main.js, draws it.
 // Visual priority: legible mechanics (cast arc, line tension, fish fight)
@@ -466,10 +466,15 @@ function buildHud(hudElement) {
   fightPanel.appendChild(staminaTrack);
   fightPanel.appendChild(distanceRow);
 
+  const reelHint = document.createElement('div');
+  reelHint.className = 'hud-panel hud-reel-hint';
+  reelHint.textContent = 'Hold Space to reel in';
+
   hudElement.appendChild(powerPanel);
   hudElement.appendChild(fightPanel);
+  hudElement.appendChild(reelHint);
 
-  const refs = { powerPanel, powerFill, fightPanel, speciesName, tensionFill, staminaFill, distanceRow };
+  const refs = { powerPanel, powerFill, fightPanel, speciesName, tensionFill, staminaFill, distanceRow, reelHint };
   hudRegistry.set(hudElement, refs);
   return refs;
 }
@@ -483,6 +488,7 @@ export function renderHUD(hudElement, state) {
 
   refs.powerPanel.classList.toggle('visible', isCharging);
   refs.fightPanel.classList.toggle('visible', isFighting);
+  refs.reelHint.classList.toggle('visible', state.state === 'waiting_bite');
 
   if (isCharging) {
     const power = Math.max(0, Math.min(1, state.chargePower ?? 0));
@@ -491,7 +497,8 @@ export function renderHUD(hudElement, state) {
 
   if (isFighting) {
     const tensionState = state.tensionState || {};
-    const tension = Math.max(0, Math.min(1, tensionState.tension ?? 0));
+    // Relative to the equipped line's break point, so a full bar always means about to snap.
+    const tension = Math.max(0, Math.min(1, (tensionState.tension ?? 0) / (tensionState.breakThreshold ?? 1)));
     refs.tensionFill.style.width = `${tension * 100}%`;
     const tensionColor = tension < 0.5
       ? lerpColor('#7fd8a8', '#ffb703', tension / 0.5)

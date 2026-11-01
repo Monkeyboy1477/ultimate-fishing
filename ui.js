@@ -1,4 +1,4 @@
-// ui.js — start screen, catch-result overlay, and shop for Umtimatefishing.
+// ui.js — start screen, catch-result overlay, and shop for Ultimate Fishing.
 // Owns #menu-overlay only. Does NOT touch #hud-overlay (render.js owns that).
 
 let storedCallbacks = null;
@@ -12,12 +12,12 @@ function buildStartScreen(menuOverlayElement, callbacks) {
 
   const title = document.createElement('h2');
   title.className = 'menu-panel-title';
-  title.textContent = 'Umtimatefishing';
+  title.textContent = 'Ultimate Fishing';
 
   const instructions = document.createElement('p');
   instructions.className = 'menu-panel-text';
   instructions.textContent =
-    'Hold the mouse button to cast, move left/right to aim, release to let it fly. Hold Space to reel — but ease off when the fish fights back or the line will snap.';
+    'Hold the mouse button to cast, move left/right to aim, release to let it fly. Hold Space to reel in anytime — but ease off when a fish fights back or the line will snap.';
 
   const buttonRow = document.createElement('div');
   buttonRow.className = 'menu-button-row';
@@ -177,6 +177,24 @@ export function showShop(menuOverlayElement, economy, onClose) {
   menuOverlayElement.innerHTML = '';
   menuOverlayElement.appendChild(panel);
   menuOverlayElement.classList.add('active');
+}
+
+// Shown while idle, since a free retrieve ends with no overlay to reach the shop from.
+export function createIdleShopButton(stageElement, menuOverlayElement, economy) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'menu-button menu-button-secondary idle-shop-button';
+  button.textContent = 'Shop';
+  button.hidden = true;
+  button.addEventListener('click', () => {
+    button.blur();
+    showShop(menuOverlayElement, economy, () => {
+      menuOverlayElement.innerHTML = '';
+      menuOverlayElement.classList.remove('active');
+    });
+  });
+  stageElement.appendChild(button);
+  return button;
 }
 
 function describeResult(result) {
