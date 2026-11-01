@@ -714,15 +714,27 @@ function buildProps(scene) {
   scene.add(shadows);
 }
 
+// The water's normals warp reflections of objects this close into dark jagged blobs.
+function hideFromReflection(objects) {
+  const renderWaterReflection = water.onBeforeRender;
+  water.onBeforeRender = (renderer, scene, camera) => {
+    objects.forEach((object) => { object.visible = false; });
+    renderWaterReflection.call(water, renderer, scene, camera);
+    objects.forEach((object) => { object.visible = true; });
+  };
+}
+
 // ---- Public API ----------------------------------------------------------------
 export function buildWorld(scene, renderer) {
   const sunDirection = buildAtmosphere(scene, renderer);
   buildWater(scene, sunDirection);
   buildTerrain(scene);
   buildTrees(scene);
+  const firstNearObject = scene.children.length;
   buildReeds(scene);
   buildDock(scene);
   buildProps(scene);
+  hideFromReflection(scene.children.slice(firstNearObject));
   return { sunDirection };
 }
 

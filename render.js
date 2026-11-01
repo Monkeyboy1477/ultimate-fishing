@@ -512,6 +512,7 @@ export function renderHUD(hudElement, state) {
 
     const fish = state.hookedFish;
     refs.speciesName.textContent = fish?.species?.name || 'Fish';
+    refs.speciesName.classList.toggle('hud-species-giant', (fish?.species?.rarityTier ?? 0) >= 5);
     const stamina = Math.max(0, Math.min(1, fish?.stamina ?? 1));
     refs.staminaFill.style.width = `${stamina * 100}%`;
   }

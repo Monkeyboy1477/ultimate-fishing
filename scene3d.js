@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { buildWorld, updateWorld } from './world3d.js';
 import { EYE_POS, CAMERA_PITCH_DEG, ROD_TIP, HOME_POINT } from './constants.js';
+import { createFishModel, createLureModel } from './fishModels.js';
 
 const { clamp, damp, degToRad, lerp } = THREE.MathUtils;
 
@@ -37,7 +38,11 @@ const LINE_COLOR = new THREE.Color(0xe8edf0);
 const TENSION_GREEN = new THREE.Color(0x3ecf6b);
 const TENSION_AMBER = new THREE.Color(0xe8a93b);
 const TENSION_RED = new THREE.Color(0xe43a3a);
-const BELLY_COLOR = new THREE.Color(0xf1ead6);
+
+const TROPHY_DISTANCE = 3.2;
+const TROPHY_LIFT = 0.72;
+const TROPHY_MIN_LENGTH = 1.25;
+const TROPHY_MAX_LENGTH = 3.7;
 
 let renderer = null;
 let camera = null;
@@ -74,6 +79,8 @@ const linePoints = Array.from({ length: LINE_POINTS + 1 }, () => new THREE.Vecto
 
 // Lure and wake
 let lurePivot = null;
+let activeLure = null;
+let activeLureKind = null;
 let wakeMesh = null;
 let wakeOpacity = 0;
 let wakeRingTimer = 0;
@@ -82,15 +89,26 @@ const lastLurePos = new THREE.Vector3();
 
 // Fish
 let fishGroup = null;
-let fishBodyMesh = null;
-let fishTailPivot = null;
-let fishBodyMaterial = null;
-let fishFinMaterial = null;
-let fishColorKey = null;
+let fishShadow = null;
+let activeFish = null;
+let activeFishId = null;
+let fishLength = 1;
+let fishSwimPhase = 0;
+let fishYaw = 0;
+let fishSide = 1;
+let fishSideTimer = 0;
 let fishSplashTimer = 0;
 let fishLeapTimer = 0;
 let fishLeapAge = -1;
 let fishLeapHeight = 0;
+
+// Gear visuals
+let graphiteMaterial = null;
+let corkMaterial = null;
+let metalMaterial = null;
+let guideLineMaterial = null;
+let gearKey = null;
+const baseLineColor = LINE_COLOR.clone();
 
 // Effects
 const rings = [];
@@ -222,10 +240,13 @@ function buildRod() {
   scene.add(rodPivot);
 
   const cork = new THREE.MeshStandardMaterial({ map: makeCorkTexture(), roughness: 0.92 });
+  corkMaterial = cork;
   const dark = new THREE.MeshStandardMaterial({ color: 0x15181b, roughness: 0.55, metalness: 0.3 });
   const metal = new THREE.MeshStandardMaterial({ color: 0x3a4148, roughness: 0.38, metalness: 0.75 });
   const silver = new THREE.MeshStandardMaterial({ color: 0xb9c2c9, roughness: 0.3, metalness: 0.9 });
   const graphite = new THREE.MeshStandardMaterial({ color: 0x20262e, roughness: 0.34, metalness: 0.25 });
+  graphiteMaterial = graphite;
+  metalMaterial = metal;
 
   rodPivot.add(rodCylinder(0.017, 0.019, 0.022, dark, 0.255));
   rodPivot.add(rodCylinder(0.016, 0.018, 0.2, cork, 0.15));
@@ -249,10 +270,8 @@ function buildRod() {
   const guideLinePositions = new Float32Array((GUIDE_RINGS.length + 2) * 3);
   const guideLineGeometry = new THREE.BufferGeometry();
   guideLineGeometry.setAttribute('position', new THREE.BufferAttribute(guideLinePositions, 3));
-  guideLine = new THREE.Line(
-    guideLineGeometry,
-    new THREE.LineBasicMaterial({ color: LINE_COLOR, transparent: true, opacity: 0.7 })
-  );
+  guideLineMaterial = new THREE.LineBasicMaterial({ color: LINE_COLOR, transparent: true, opacity: 0.7 });
+  guideLine = new THREE.Line(guideLineGeometry, guideLineMaterial);
   guideLine.frustumCulled = false;
   rodPivot.add(guideLine);
 
@@ -285,26 +304,17 @@ function buildLine() {
   scene.add(line);
 }
 
+function setLureKind(kind) {
+  if (kind === activeLureKind) return;
+  if (activeLure) lurePivot.remove(activeLure.group);
+  activeLure = createLureModel(kind);
+  activeLureKind = kind;
+  lurePivot.add(activeLure.group);
+}
+
 function buildLure() {
   lurePivot = new THREE.Group();
-  const red = new THREE.MeshStandardMaterial({ color: 0xd8261c, roughness: 0.35 });
-  const white = new THREE.MeshStandardMaterial({ color: 0xf4f1e8, roughness: 0.4 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.6 });
-
-  const radius = 0.06;
-  const top = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-    red
-  );
-  const bottom = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 14, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
-    white
-  );
-  const band = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.005, 6, 18), dark);
-  band.rotation.x = Math.PI / 2;
-  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.05, 8), white);
-  stem.position.y = radius + 0.02;
-  lurePivot.add(top, bottom, band, stem);
+  setLureKind('bobber');
   scene.add(lurePivot);
 
   // A V of two fading quads, apex at the lure, arms trailing along local -Z.
@@ -342,90 +352,30 @@ function buildLure() {
 function buildFish() {
   fishGroup = new THREE.Group();
   fishGroup.visible = false;
+  // Yaw, then pitch nose up or down, then roll around the body's long axis.
+  fishGroup.rotation.order = 'YZX';
   scene.add(fishGroup);
 
-  fishBodyMaterial = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    vertexColors: true,
-    roughness: 0.42,
-    metalness: 0.12,
-  });
-  fishFinMaterial = new THREE.MeshStandardMaterial({
-    color: 0x33586a,
-    roughness: 0.55,
-    metalness: 0.05,
-    side: THREE.DoubleSide,
-  });
-
-  const BODY_HALF_LEN = 0.2;
-  const profile = [
-    [0.0, -1],
-    [0.028, -0.86],
-    [0.052, -0.6],
-    [0.07, -0.28],
-    [0.075, 0.0],
-    [0.066, 0.28],
-    [0.046, 0.58],
-    [0.022, 0.85],
-    [0.008, 1],
-  ].map(([r, y]) => new THREE.Vector2(r, y * BODY_HALF_LEN));
-  const bodyGeometry = new THREE.LatheGeometry(profile, 16);
-  // Baked so the nose is at local +X and the body is flattened side to side.
-  bodyGeometry.rotateZ(Math.PI / 2);
-  bodyGeometry.scale(1, 1.1, 0.62);
-  bodyGeometry.computeVertexNormals();
-  bodyGeometry.setAttribute(
-    'color',
-    new THREE.BufferAttribute(new Float32Array(bodyGeometry.attributes.position.count * 3), 3)
-  );
-  fishBodyMesh = new THREE.Mesh(bodyGeometry, fishBodyMaterial);
-  fishGroup.add(fishBodyMesh);
-
-  const dorsalShape = new THREE.Shape();
-  dorsalShape.moveTo(0.05, 0);
-  dorsalShape.lineTo(-0.03, 0.09);
-  dorsalShape.lineTo(-0.09, 0);
-  dorsalShape.lineTo(0.05, 0);
-  const dorsal = new THREE.Mesh(new THREE.ShapeGeometry(dorsalShape), fishFinMaterial);
-  dorsal.position.set(-0.01, 0.07, 0);
-  fishGroup.add(dorsal);
-
-  const pectoralShape = new THREE.Shape();
-  pectoralShape.moveTo(0, 0);
-  pectoralShape.lineTo(-0.07, -0.03);
-  pectoralShape.lineTo(-0.02, -0.05);
-  pectoralShape.lineTo(0, 0);
-  const pectoralGeometry = new THREE.ShapeGeometry(pectoralShape);
-  const pectoralRight = new THREE.Mesh(pectoralGeometry, fishFinMaterial);
-  pectoralRight.rotation.x = -Math.PI / 2;
-  pectoralRight.position.set(0.07, -0.02, 0.042);
-  fishGroup.add(pectoralRight);
-  const pectoralLeft = new THREE.Mesh(pectoralGeometry, fishFinMaterial);
-  pectoralLeft.rotation.x = -Math.PI / 2;
-  pectoralLeft.scale.set(1, 1, -1);
-  pectoralLeft.position.set(0.07, -0.02, -0.042);
-  fishGroup.add(pectoralLeft);
-
-  const eyeGeometry = new THREE.CircleGeometry(0.012, 10);
-  const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0x0c0c0c });
-  const eyeRight = new THREE.Mesh(eyeGeometry, eyeMaterial);
-  eyeRight.position.set(0.125, 0.017, 0.036);
-  fishGroup.add(eyeRight);
-  const eyeLeft = new THREE.Mesh(eyeGeometry, eyeMaterial);
-  eyeLeft.position.set(0.125, 0.017, -0.036);
-  eyeLeft.rotation.y = Math.PI;
-  fishGroup.add(eyeLeft);
-
-  fishTailPivot = new THREE.Group();
-  fishTailPivot.position.set(-BODY_HALF_LEN, 0, 0);
-  fishGroup.add(fishTailPivot);
-  const tailShape = new THREE.Shape();
-  tailShape.moveTo(0.01, 0);
-  tailShape.lineTo(-0.13, 0.09);
-  tailShape.lineTo(-0.07, 0);
-  tailShape.lineTo(-0.13, -0.09);
-  tailShape.lineTo(0.01, 0);
-  fishTailPivot.add(new THREE.Mesh(new THREE.ShapeGeometry(tailShape), fishFinMaterial));
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
+  gradient.addColorStop(0, 'rgba(6,14,18,0.85)');
+  gradient.addColorStop(0.6, 'rgba(6,14,18,0.55)');
+  gradient.addColorStop(1, 'rgba(6,14,18,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  const shadowGeometry = new THREE.PlaneGeometry(1, 1);
+  shadowGeometry.rotateX(-Math.PI / 2);
+  fishShadow = new THREE.Mesh(shadowGeometry, new THREE.MeshBasicMaterial({
+    map: new THREE.CanvasTexture(canvas),
+    transparent: true,
+    depthWrite: false,
+  }));
+  fishShadow.visible = false;
+  scene.add(fishShadow);
 }
 
 function buildEffects() {
@@ -612,7 +562,7 @@ function setLineColor(tension) {
   const t = clamp(tension, 0, 1);
   if (t < 0.5) color1.copy(TENSION_GREEN).lerp(TENSION_AMBER, t / 0.5);
   else color1.copy(TENSION_AMBER).lerp(TENSION_RED, (t - 0.5) / 0.5);
-  lineMaterial.color.copy(LINE_COLOR).lerp(color1, 0.2 + t * 0.35);
+  lineMaterial.color.copy(baseLineColor).lerp(color1, 0.2 + t * 0.35);
 }
 
 function updateLine(end, targetSlack, dt) {
@@ -740,11 +690,13 @@ function updateEffects(dt) {
 // Lure
 // ---------------------------------------------------------------------------
 
-function placeLure(position, leanX, leanZ) {
+function placeLure(position, leanX, leanZ, inWater = false) {
   const distance = camera.position.distanceTo(position);
   lurePivot.visible = true;
   lurePivot.position.copy(position);
-  lurePivot.rotation.set(leanX, 0, leanZ);
+  // Everything but the bobber lies on its side once it's in the water.
+  const flatten = inWater && activeLure.flat ? Math.PI / 2 : 0;
+  lurePivot.rotation.set(leanX + flatten, 0, leanZ);
   // Exaggerated with range so the bobber stays readable far from the dock.
   lurePivot.scale.setScalar(1 + distance * 0.06);
 }
@@ -807,95 +759,180 @@ function speciesColorHex(species) {
   return new THREE.Color().setHSL(0.5 + ((hash % 360) / 360) * 0.1, 0.4, 0.35 + (hash % 20) / 100).getHex();
 }
 
-function applyFishColor(species) {
+function selectFish(species) {
+  const id = species ? species.id || species.name || 'generic' : 'generic';
   const hex = species ? speciesColorHex(species) : 0x4d7a8c;
-  if (hex === fishColorKey) return;
-  fishColorKey = hex;
-
-  const flank = new THREE.Color(hex);
-  const back = flank.clone().multiplyScalar(0.48);
-  const belly = flank.clone().lerp(BELLY_COLOR, 0.78);
-  const geometry = fishBodyMesh.geometry;
-  const positions = geometry.attributes.position;
-  const colors = geometry.attributes.color;
-  for (let i = 0; i < positions.count; i += 1) {
-    const h = clamp(positions.getY(i) / 0.0825, -1, 1);
-    if (h > 0) color1.copy(flank).lerp(back, h);
-    else color1.copy(flank).lerp(belly, Math.min(1, -h * 1.5));
-    colors.setXYZ(i, color1.r, color1.g, color1.b);
-  }
-  colors.needsUpdate = true;
-  fishFinMaterial.color.copy(flank).multiplyScalar(0.62);
+  const key = `${id}:${hex}`;
+  if (key === activeFishId) return;
+  if (activeFish) fishGroup.remove(activeFish.group);
+  activeFish = createFishModel(id, hex);
+  activeFishId = key;
+  fishGroup.add(activeFish.group);
 }
 
-// Returns the fish's world position; used for the rod target before the rod updates.
+// Real length, exaggerated with range so a far-off fish still reads on screen.
+function displayLength(realLength, distance) {
+  return Math.max(realLength * (1 + distance * 0.02), distance * 0.03);
+}
+
+// Returns the fish's stamina and sets fishPos; used for the rod target before the rod updates.
 function computeFishPosition(cast, frameState, tensionState, hookedFish, time) {
   const origin = frameState.fightOrigin || (cast && cast.landingPoint) || { x: 0, z: -10 };
   const remaining = clamp(tensionState ? tensionState.distanceRemaining : 1, 0, 1);
   const stamina = hookedFish && typeof hookedFish.stamina === 'number' ? hookedFish.stamina : 1;
+  selectFish(hookedFish && hookedFish.species);
+  const realLength = activeFish.lengthFor(hookedFish ? hookedFish.weight : 0);
   const wander = Math.sin(time * 1.1) * 1.5 * remaining * stamina;
+  // Long fish hold further off the dock so they don't swim through it.
   fishPos.set(
     lerp(HOME_POINT.x, origin.x, remaining) + wander,
-    0.06,
-    lerp(HOME_POINT.z, origin.z, remaining)
+    0,
+    lerp(HOME_POINT.z - realLength * 0.32, origin.z, remaining)
   );
+  fishLength = displayLength(realLength, camera.position.distanceTo(fishPos));
   return stamina;
 }
 
-function updateFish(dt, time, hookedFish, stamina, tension) {
+function updateFishWake(dirX, dirZ, opacity) {
+  wakeMesh.visible = opacity > 0.01;
+  if (!wakeMesh.visible) return;
+  wakeMesh.material.opacity = opacity;
+  wakeMesh.position.set(
+    fishPos.x + dirX * fishLength * 0.42,
+    0.03,
+    fishPos.z + dirZ * fishLength * 0.42
+  );
+  wakeMesh.rotation.y = Math.atan2(dirX, dirZ);
+  const size = Math.max(1, fishLength * 1.3);
+  wakeMesh.scale.set(size * 0.7, 1, size);
+}
+
+function updateFish(dt, time, stamina, tension, remaining) {
   fishGroup.visible = true;
+  const model = activeFish;
+  const topHeight = model.top * fishLength;
+  const bottomHeight = model.bottom * fishLength;
+
+  // Sharks show just a fin; other fish roll their backs through the surface.
+  const cruiseY = model.surfaceMode === 'fin' ? -topHeight * 1.03 : -topHeight * 0.42;
+  const nearDock = 1 - THREE.MathUtils.smoothstep(remaining, 0.03, 0.26);
+  let y = lerp(cruiseY, bottomHeight * 0.3, nearDock);
 
   fishLeapTimer -= dt;
-  if (fishLeapAge < 0 && fishLeapTimer <= 0 && stamina > 0.3) {
+  if (model.leaps && fishLeapAge < 0 && fishLeapTimer <= 0 && stamina > 0.12 && nearDock < 0.8) {
     fishLeapAge = 0;
-    fishLeapHeight = 0.25 + stamina * 0.55;
-    splashAt(fishPos.x, 0, fishPos.z, 0.7);
+    fishLeapHeight = Math.max(0.7, fishLength * 0.72) * (0.65 + stamina * 0.35);
+    splashAt(fishPos.x, 0, fishPos.z, clamp(fishLength * 0.4, 0.5, 1.6));
   }
+  let pitch = 0;
+  let roll = 0;
+  let leaping = false;
   if (fishLeapAge >= 0) {
     fishLeapAge += dt;
-    const t = fishLeapAge / 0.75;
+    const t = fishLeapAge / (0.8 + fishLength * 0.08);
     if (t >= 1) {
       fishLeapAge = -1;
-      fishLeapTimer = 3 + Math.random() * 4;
-      splashAt(fishPos.x, 0, fishPos.z, 0.9);
+      fishLeapTimer = 3.5 + Math.random() * 3.5;
+      splashAt(fishPos.x, 0, fishPos.z, clamp(fishLength * 0.5, 0.7, 1.9));
     } else {
-      fishPos.y += Math.sin(t * Math.PI) * fishLeapHeight;
+      leaping = true;
+      y += Math.sin(t * Math.PI) * (fishLeapHeight + topHeight);
+      pitch = lerp(0.95, -0.95, t);
+      roll = Math.sin(t * Math.PI * 2) * 0.35;
     }
   }
 
-  const thrashFreq = 4 + stamina * 10;
-  const thrashAmp = 0.1 + stamina * 0.35;
-  const surfaceBob = Math.abs(Math.sin(time * thrashFreq * 0.5)) * 0.03;
-  fishGroup.position.set(fishPos.x, fishPos.y + surfaceBob, fishPos.z);
+  // Swim side-on to the angler so the silhouette reads, not end-on.
+  fishSideTimer -= dt;
+  if (fishSideTimer <= 0) {
+    fishSide = -fishSide;
+    fishSideTimer = 2.5 + Math.random() * 2.5;
+  }
+  const toAngler = Math.atan2(-(GRIP_POS.z - fishPos.z), GRIP_POS.x - fishPos.x);
+  fishYaw = damp(fishYaw, toAngler + fishSide * 1.15, 2.2, dt);
 
-  const headingX = fishPos.x - GRIP_POS.x;
-  const headingZ = fishPos.z - GRIP_POS.z;
-  const heading = Math.atan2(-headingZ, headingX);
-  fishGroup.rotation.y = heading + Math.sin(time * thrashFreq) * thrashAmp * 0.45;
-  fishBodyMesh.rotation.y = Math.sin(time * thrashFreq + 0.6) * thrashAmp * 0.25;
-  fishTailPivot.rotation.y = Math.sin(time * thrashFreq * 1.6) * (thrashAmp * 1.4 + 0.25);
+  const thrashFreq = (4 + stamina * 9) / (1 + fishLength * 0.22);
+  const thrashAmp = 0.05 + stamina * 0.16;
+  const yaw = fishYaw + Math.sin(time * thrashFreq) * thrashAmp * 0.5;
+  fishSwimPhase += dt * thrashFreq * 2.2;
+  model.setSwim(leaping ? 0.09 : 0.025 + stamina * 0.055, fishSwimPhase);
 
-  const weight = hookedFish ? hookedFish.weight || 1 : 1;
-  const baseScale = clamp(0.6 + Math.log(1 + weight) * 0.35, 0.5, 2.2);
-  const scale = baseScale * (1 + camera.position.distanceTo(fishPos) * 0.015);
-  fishGroup.scale.setScalar(scale);
+  // Near the dock, turn the flank up toward the raised camera.
+  const zSide = Math.sign(Math.sin(yaw) * (camera.position.x - fishPos.x) + Math.cos(yaw) * (camera.position.z - fishPos.z)) || 1;
+  roll += zSide * nearDock * 0.42;
 
-  applyFishColor(hookedFish && hookedFish.species);
+  fishGroup.position.set(fishPos.x, y, fishPos.z);
+  fishGroup.rotation.set(roll, yaw, pitch);
+  fishGroup.scale.setScalar(fishLength);
+
+  const dirX = Math.cos(yaw);
+  const dirZ = -Math.sin(yaw);
+  const underwater = !leaping && y < bottomHeight * 0.2;
+  fishShadow.visible = underwater;
+  if (underwater) {
+    fishShadow.position.set(fishPos.x, 0.022, fishPos.z);
+    fishShadow.rotation.y = yaw;
+    fishShadow.scale.set(fishLength * 1.1, 1, Math.max(0.35, fishLength * (model.top + model.bottom) * 1.6));
+    fishShadow.material.opacity = lerp(0.85, 0.4, nearDock);
+  }
+  updateFishWake(dirX, dirZ, leaping ? 0 : 0.62 * (1 - nearDock * 0.6));
 
   fishSplashTimer -= dt;
-  if (fishSplashTimer <= 0 && fishLeapAge < 0) {
+  if (fishSplashTimer <= 0 && !leaping) {
     const violence = clamp(stamina * 0.6 + tension * 0.5, 0.15, 1);
-    spawnDroplets(fishPos.x, 0, fishPos.z, Math.round(3 + 9 * violence), 1 + 1.4 * violence);
-    spawnRing(fishPos.x, fishPos.z, 0, 0.9, (0.45 + violence * 0.8) * baseScale, 0.25 + violence * 0.35);
+    const reach = Math.max(1, fishLength);
+    spawnDroplets(fishPos.x - dirX * fishLength * 0.35, 0, fishPos.z - dirZ * fishLength * 0.35, Math.round(3 + 9 * violence), (1 + 1.4 * violence) * Math.sqrt(reach));
+    spawnRing(fishPos.x, fishPos.z, 0, 0.9, (0.45 + violence * 0.8) * reach, 0.25 + violence * 0.35);
     fishSplashTimer = lerp(0.65, 0.14, violence);
   }
 
-  const noseReach = 0.2 * scale;
-  fishNose.set(
-    fishGroup.position.x + Math.cos(fishGroup.rotation.y) * noseReach,
-    fishGroup.position.y,
-    fishGroup.position.z - Math.sin(fishGroup.rotation.y) * noseReach
-  );
+  fishGroup.updateMatrixWorld(true);
+  fishNose.copy(model.mouth);
+  fishGroup.localToWorld(fishNose);
+}
+
+function updateTrophy(dt, time, hookedFish) {
+  selectFish(hookedFish.species);
+  const model = activeFish;
+  const realLength = model.lengthFor(hookedFish.weight);
+  const span = Math.log(clamp(realLength, 0.2, 5) / 0.2) / Math.log(25);
+  fishLength = lerp(TROPHY_MIN_LENGTH, TROPHY_MAX_LENGTH, span);
+
+  fishShadow.visible = false;
+  wakeMesh.visible = false;
+  fishGroup.visible = true;
+
+  // Held up in the top of the frame, above the compact result panel.
+  v1.set(0, TROPHY_LIFT, -TROPHY_DISTANCE);
+  camera.localToWorld(v1);
+  v1.x += Math.sin(time * 0.8) * 0.05;
+  v1.y += Math.sin(time * 1.1) * 0.035;
+  fishGroup.position.copy(v1);
+  fishGroup.rotation.set(0.05, camera.rotation.y + Math.sin(time * 0.75) * 0.22, 0.13 + Math.sin(time * 1.1) * 0.035);
+  fishGroup.scale.setScalar(fishLength);
+
+  fishSwimPhase += dt * 5;
+  model.setSwim(0.018 + Math.max(0, Math.sin(time * 0.9)) * 0.03, fishSwimPhase);
+
+  fishGroup.updateMatrixWorld(true);
+  fishNose.copy(model.mouth);
+  fishGroup.localToWorld(fishNose);
+}
+
+function applyGear(gear) {
+  setLureKind(gear && gear.lure && gear.lure.kind ? gear.lure.kind : 'bobber');
+  const rodGear = gear && gear.rod;
+  const lineHex = gear && gear.line ? gear.line.color : undefined;
+  const key = `${rodGear ? rodGear.blankColor : ''}|${rodGear ? rodGear.gripColor : ''}|${rodGear ? rodGear.accentColor : ''}|${lineHex}`;
+  if (key === gearKey) return;
+  gearKey = key;
+  graphiteMaterial.color.set(rodGear && rodGear.blankColor !== undefined ? rodGear.blankColor : 0x20262e);
+  metalMaterial.color.set(rodGear && rodGear.accentColor !== undefined ? rodGear.accentColor : 0x3a4148);
+  // The cork texture darkens whatever it multiplies, so brighten the tint to compensate.
+  if (rodGear && rodGear.gripColor !== undefined) corkMaterial.color.set(rodGear.gripColor).multiplyScalar(1.7);
+  else corkMaterial.color.set(0xffffff);
+  baseLineColor.set(lineHex !== undefined ? lineHex : LINE_COLOR);
+  guideLineMaterial.color.copy(baseLineColor);
 }
 
 // ---------------------------------------------------------------------------
@@ -912,9 +949,26 @@ function updateCamera(dt, time, targetYaw, shake) {
   camera.updateMatrixWorld();
 }
 
+// Dev preview: #fish=<id> shows a species in the catch view, #fish=<id>&mode=fight in the water.
+function previewFrame(frame) {
+  const match = /^#fish=([a-z_]+)(?:&w=([\d.]+))?(?:&mode=(fight))?/.exec(location.hash);
+  if (!match) return frame;
+  const hookedFish = { species: { id: match[1] }, weight: match[2] ? parseFloat(match[2]) : 0, stamina: 0.7 };
+  if (match[3]) {
+    return {
+      ...frame,
+      state: 'fighting',
+      hookedFish,
+      tensionState: { tension: 0.4, distanceRemaining: 0.5 + Math.sin((frame.time || 0) * 0.2) * 0.5 },
+      fightOrigin: { x: 4, z: -22 },
+    };
+  }
+  return { ...frame, state: 'result', hookedFish, lastResult: { caught: true } };
+}
+
 export function renderScene3D(frameState) {
   if (!started) return;
-  const frame = frameState || {};
+  const frame = previewFrame(frameState || {});
   const {
     state,
     aimAngleDeg = 0,
@@ -929,6 +983,8 @@ export function renderScene3D(frameState) {
 
   const dt = Math.min(clock ? clock.getDelta() : 0.016, 0.05);
   updateWorld(dt, time);
+  applyGear(frame.gear);
+  const trophy = state === 'result' && frame.lastResult && frame.lastResult.caught && hookedFish;
 
   const entering = state !== previousState;
   if (entering && state === 'cast_flight' && previousState === 'charging') {
@@ -937,7 +993,7 @@ export function renderScene3D(frameState) {
     rod.pitchVelocity -= 2.5 + 3 * power;
   }
 
-  const tension = clamp(tensionState ? tensionState.tension : 0, 0, 1);
+  const tension = tensionState ? clamp(tensionState.tension / (tensionState.breakThreshold ?? 1), 0, 1) : 0;
   const landing = cast && cast.landingPoint ? cast.landingPoint : { x: 0, y: 0, z: -10 };
 
   let rodYaw = BASE_ROD_YAW;
@@ -976,11 +1032,18 @@ export function renderScene3D(frameState) {
     case 'fighting': {
       fishStamina = computeFishPosition(cast, frame, tensionState, hookedFish, time);
       rodYaw = yawToward(fishPos.x, fishPos.z);
-      rodPitch = 0.22 - 0.3 * tension;
-      rodBend = 0.14 + 0.95 * tension;
+      rodPitch = 0.22 - 0.2 * tension;
+      rodBend = 0.1 + 0.5 * tension;
       shake = 0.2 + tension * 0.8;
       crank = reeling ? lerp(11, 4, tension) : 0;
       cameraTarget = rodYaw * 0.5;
+      break;
+    }
+    case 'result': {
+      if (trophy) {
+        rodPitch = 0.34;
+        rodBend = 0.32;
+      }
       break;
     }
     default:
@@ -989,10 +1052,12 @@ export function renderScene3D(frameState) {
 
   updateCamera(dt, time, cameraTarget, state === 'fighting' ? tension : 0);
   updateRod(dt, time, rodYaw, rodPitch, rodBend, shake, crank);
+  if (activeLure.spin && reeling) activeLure.spin.rotation.y += dt * 40;
 
   switch (state) {
     case 'cast_flight': {
       fishGroup.visible = false;
+      fishShadow.visible = false;
       clearWake();
       const point = cast && typeof cast.trajectoryFn === 'function'
         ? cast.trajectoryFn(Math.max(0, castElapsed))
@@ -1006,12 +1071,13 @@ export function renderScene3D(frameState) {
 
     case 'waiting_bite': {
       fishGroup.visible = false;
+      fishShadow.visible = false;
       const lure = frame.lurePos || landing;
       const bob = reeling ? 0.025 : 0.02 + Math.sin(time * 2.2) * 0.018;
       lureTarget.set(lure.x, bob, lure.z);
       const wake = updateWake(dt, lureTarget);
       const lean = clamp(wake.speed * 0.09, 0, 0.55);
-      placeLure(lureTarget, wake.dirZ * lean, -wake.dirX * lean);
+      placeLure(lureTarget, wake.dirZ * lean, -wake.dirX * lean, true);
       setLineColor(0);
       updateLine(lureTarget, reeling ? 0.18 : 0.75, dt);
       break;
@@ -1019,14 +1085,16 @@ export function renderScene3D(frameState) {
 
     case 'fighting': {
       lurePivot.visible = false;
-      clearWake();
+      hasLastLure = false;
       if (entering) {
         fishLeapAge = -1;
-        fishLeapTimer = 0.6 + Math.random() * 1.2;
+        fishLeapTimer = 0.8 + Math.random() * 1.5;
         fishSplashTimer = 0;
-        splashAt(fishPos.x, 0, fishPos.z, 0.8);
+        fishSideTimer = 0;
+        fishYaw = Math.atan2(-(GRIP_POS.z - fishPos.z), GRIP_POS.x - fishPos.x) + fishSide * 1.15;
+        splashAt(fishPos.x, 0, fishPos.z, 0.9);
       }
-      updateFish(dt, time, hookedFish, fishStamina, tension);
+      updateFish(dt, time, fishStamina, tension, clamp(tensionState ? tensionState.distanceRemaining : 1, 0, 1));
       setLineColor(tension);
       updateLine(fishNose, Math.pow(1 - tension, 2) * 0.22, dt);
       break;
@@ -1036,7 +1104,17 @@ export function renderScene3D(frameState) {
     case 'menu':
     case 'result':
     default: {
+      if (trophy) {
+        hasLastLure = false;
+        lurePivot.visible = false;
+        if (entering) splashAt(HOME_POINT.x, 0, HOME_POINT.z - 0.5, 1.2);
+        updateTrophy(dt, time, hookedFish);
+        setLineColor(0.1);
+        updateLine(fishNose, 0, dt);
+        break;
+      }
       fishGroup.visible = false;
+      fishShadow.visible = false;
       clearWake();
       lureTarget.set(
         tipWorld.x + Math.sin(time * 1.4) * 0.012,

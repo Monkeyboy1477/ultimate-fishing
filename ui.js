@@ -1,6 +1,8 @@
 // ui.js — start screen, catch-result overlay, and shop for Ultimate Fishing.
 // Owns #menu-overlay only. Does NOT touch #hud-overlay (render.js owns that).
 
+import { RARITY_TIER_NAMES } from './fish.js';
+
 let storedCallbacks = null;
 let storedEconomy = null;
 let startScreenEl = null;
@@ -73,7 +75,14 @@ export function initMenus(menuOverlayElement, callbacks, economy) {
 // Shop
 // ---------------------------------------------------------------------------
 
-const CATEGORY_LABELS = { rod: 'Rod', line: 'Line', lure: 'Lure' };
+const CATEGORY_LABELS = { rod: 'Rods', line: 'Lines', lure: 'Lures' };
+let activeShopCategory = 'rod';
+
+function gearStatText(category, tier) {
+  if (category === 'rod') return `Cast reach: ${tier.maxDistance} m`;
+  if (category === 'line') return `Line strength: ${tier.breakThreshold.toFixed(1)}`;
+  return `Hooks up to: ${RARITY_TIER_NAMES[tier.maxRarityTier]} fish · Bite speed ×${tier.biteRateMultiplier.toFixed(1)}`;
+}
 
 function buildGearCard(category, tier, economy, onChange) {
   const card = document.createElement('div');
@@ -89,9 +98,14 @@ function buildGearCard(category, tier, economy, onChange) {
   desc.textContent = tier.description;
   card.appendChild(desc);
 
+  const stat = document.createElement('div');
+  stat.className = 'gear-card-stat';
+  stat.textContent = gearStatText(category, tier);
+  card.appendChild(stat);
+
   const price = document.createElement('div');
   price.className = 'gear-card-price';
-  price.textContent = tier.price > 0 ? `$${tier.price}` : 'Free';
+  price.textContent = tier.price > 0 ? `$${tier.price.toLocaleString('en-US')}` : 'Free';
   card.appendChild(price);
 
   const owned = economy.isOwned(category, tier.id);
@@ -136,7 +150,7 @@ function buildShopPanel(economy, onClose) {
 
   const currency = document.createElement('p');
   currency.className = 'menu-panel-note';
-  currency.textContent = `You have $${economy.getCurrency().toFixed(0)}`;
+  currency.textContent = `You have $${Math.floor(economy.getCurrency()).toLocaleString('en-US')}`;
   panel.appendChild(currency);
 
   const rerender = () => {
@@ -144,23 +158,30 @@ function buildShopPanel(economy, onClose) {
     panel.replaceWith(fresh);
   };
 
+  const tabs = document.createElement('div');
+  tabs.className = 'gear-tabs';
+  tabs.setAttribute('role', 'tablist');
   ['rod', 'line', 'lure'].forEach((category) => {
-    const section = document.createElement('div');
-    section.className = 'gear-section';
-
-    const heading = document.createElement('h3');
-    heading.className = 'gear-section-title';
-    heading.textContent = CATEGORY_LABELS[category];
-    section.appendChild(heading);
-
-    const row = document.createElement('div');
-    row.className = 'gear-card-row';
-    economy.getGearTiers(category).forEach((tier) => {
-      row.appendChild(buildGearCard(category, tier, economy, rerender));
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(category === activeShopCategory));
+    tab.className = 'gear-tab';
+    tab.textContent = CATEGORY_LABELS[category];
+    tab.addEventListener('click', () => {
+      activeShopCategory = category;
+      rerender();
     });
-    section.appendChild(row);
-    panel.appendChild(section);
+    tabs.appendChild(tab);
   });
+  panel.appendChild(tabs);
+
+  const row = document.createElement('div');
+  row.className = 'gear-card-row';
+  economy.getGearTiers(activeShopCategory).forEach((tier) => {
+    row.appendChild(buildGearCard(activeShopCategory, tier, economy, rerender));
+  });
+  panel.appendChild(row);
 
   const closeButton = document.createElement('button');
   closeButton.type = 'button';
@@ -203,7 +224,7 @@ function describeResult(result) {
     const speciesName = result.species && result.species.name ? result.species.name : 'fish';
     const notes = [];
     if (result.isRecord) notes.push('New personal best!');
-    if (typeof result.soldFor === 'number') notes.push(`Sold for $${result.soldFor.toFixed(0)}`);
+    if (typeof result.soldFor === 'number') notes.push(`Sold for $${Math.round(result.soldFor).toLocaleString('en-US')}`);
     return {
       heading: 'Caught!',
       detail: `${weightText} ${speciesName}`,
@@ -212,11 +233,12 @@ function describeResult(result) {
     };
   }
 
+  const lostDetail = result.species ? `It was a ${result.species.name}.` : '';
   if (result.reason === 'line_snapped') {
-    return { heading: 'The line snapped!', detail: '', note: null, variant: 'fail' };
+    return { heading: 'The line snapped!', detail: lostDetail, note: null, variant: 'fail' };
   }
   if (result.reason === 'fish_escaped') {
-    return { heading: 'It got away!', detail: '', note: null, variant: 'fail' };
+    return { heading: 'It got away!', detail: lostDetail, note: null, variant: 'fail' };
   }
   return { heading: 'No catch.', detail: '', note: null, variant: 'fail' };
 }
@@ -226,6 +248,15 @@ export function showCatchResult(menuOverlayElement, result) {
 
   const panel = document.createElement('div');
   panel.className = `menu-panel menu-panel-result menu-panel-${info.variant}`;
+
+  const rarityTier = result.species?.rarityTier;
+  if (rarityTier) {
+    if (rarityTier >= 5) panel.classList.add(`menu-panel-tier-${rarityTier}`);
+    const badge = document.createElement('div');
+    badge.className = `rarity-badge rarity-badge-${rarityTier}`;
+    badge.textContent = RARITY_TIER_NAMES[rarityTier];
+    panel.appendChild(badge);
+  }
 
   const heading = document.createElement('h2');
   heading.className = 'menu-panel-title';

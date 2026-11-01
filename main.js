@@ -11,6 +11,7 @@ import { initScene, renderScene3D, spawnSplash3D } from './scene3d.js';
 import { renderHUD } from './render.js';
 import { initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleShopButton } from './ui.js';
 import { createEconomy } from './economy.js';
+import { installAudio } from './audio.js';
 
 const canvas = document.getElementById('game-canvas');
 const hudOverlay = document.getElementById('hud-overlay');
@@ -23,6 +24,7 @@ const topBar = {
 
 const economy = createEconomy();
 const idleShopButton = createIdleShopButton(document.getElementById('game-stage'), menuOverlay, economy);
+installAudio(document.getElementById('game-stage'));
 
 const STATE = {
   MENU: 'menu',
@@ -118,6 +120,7 @@ function returnLureHome() {
   game.hookedFish = null;
   game.cast = null;
   game.fightOrigin = null;
+  game.lastResult = null;
   game.lurePos = { ...HOME_POINT };
   game.state = STATE.MENU;
 }
@@ -204,7 +207,7 @@ function update(dt) {
       game.tensionState = step.tensionState;
 
       if (step.outcome === 'line_snapped' || step.outcome === 'fish_escaped') {
-        finishFight({ caught: false, reason: step.outcome });
+        finishFight({ caught: false, reason: step.outcome, species: game.hookedFish.species });
       } else if (step.outcome === 'landed') {
         const species = game.hookedFish.species;
         const weight = game.hookedFish.weight;
@@ -235,6 +238,12 @@ function render() {
     lurePos: game.lurePos,
     reeling: game.reelInput === 1 && (game.state === STATE.WAITING_BITE || game.state === STATE.FIGHTING),
     fightOrigin: game.fightOrigin,
+    lastResult: game.lastResult,
+    gear: {
+      rod: economy.getEquippedStats('rod').visual,
+      line: economy.getEquippedStats('line').visual,
+      lure: economy.getEquippedStats('lure').visual,
+    },
   });
 
   renderHUD(hudOverlay, {
