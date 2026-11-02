@@ -275,6 +275,37 @@ function createPlayerController({ economy, originPoints, menuOverlayElement, sho
   };
 }
 
+// Wires keydown/keyup window listeners to one player's three input methods, with the same
+// "action does whatever it meant when pressed" semantics main.js already uses for the single
+// big touch button (see onActionPress/onActionRelease above) -- scoped per player so Player 1
+// and Player 2 track their own actionHeldAs independently. Not called anywhere yet; Task 9
+// wires this up for real 2P controllers.
+function bindPlayerKeys(controller, { aimLeftKey, aimRightKey, actionKey }) {
+  let actionHeldAs = null;
+  let aimDirection = 0;
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (e.code === aimLeftKey) aimDirection = -1;
+    else if (e.code === aimRightKey) aimDirection = 1;
+    else if (e.code === actionKey) {
+      if (controller.isMenuIdle()) { actionHeldAs = 'cast'; controller.onActionPress(); }
+      else { actionHeldAs = 'reel'; controller.onActionPress(); }
+    } else return;
+    e.preventDefault();
+    controller.onAim(aimDirection);
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === aimLeftKey || e.code === aimRightKey) {
+      aimDirection = 0;
+      controller.onAim(0);
+    } else if (e.code === actionKey) {
+      controller.onActionRelease();
+      actionHeldAs = null;
+    } else return;
+    e.preventDefault();
+  });
+}
+
 initScene(canvas);
 
 // ---- Input handling -------------------------------------------------------
