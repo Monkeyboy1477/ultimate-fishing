@@ -28,7 +28,8 @@ function appendMenuButtons(container, menuOverlayElement, getEconomy, onClose, b
   });
 }
 
-function buildStartScreen(menuOverlayElement, callbacks) {
+function buildStartScreen(menuOverlayElement, callbacks, options = {}) {
+  const { showShopLinks = true } = options;
   const panel = document.createElement('div');
   panel.className = 'menu-panel';
 
@@ -67,12 +68,14 @@ function buildStartScreen(menuOverlayElement, callbacks) {
   refreshLocation();
 
   buttonRow.appendChild(startButton);
-  appendMenuButtons(buttonRow, menuOverlayElement, () => storedEconomy, () => {
-    menuOverlayElement.innerHTML = '';
-    menuOverlayElement.appendChild(startScreenEl);
-    menuOverlayElement.classList.add('active');
-    refreshLocation();
-  });
+  if (showShopLinks) {
+    appendMenuButtons(buttonRow, menuOverlayElement, () => storedEconomy, () => {
+      menuOverlayElement.innerHTML = '';
+      menuOverlayElement.appendChild(startScreenEl);
+      menuOverlayElement.classList.add('active');
+      refreshLocation();
+    });
+  }
 
   panel.appendChild(title);
   panel.appendChild(location);
@@ -89,14 +92,103 @@ function hideStartScreen(menuOverlayElement) {
   menuOverlayElement.classList.remove('active');
 }
 
-export function initMenus(menuOverlayElement, callbacks, economy) {
+export function initMenus(menuOverlayElement, callbacks, economy, options = {}) {
   storedCallbacks = callbacks;
   storedEconomy = economy;
 
-  startScreenEl = buildStartScreen(menuOverlayElement, callbacks);
+  startScreenEl = buildStartScreen(menuOverlayElement, callbacks, options);
   menuOverlayElement.innerHTML = '';
   menuOverlayElement.appendChild(startScreenEl);
   menuOverlayElement.classList.add('active');
+}
+
+// ---------------------------------------------------------------------------
+// Mode select
+// ---------------------------------------------------------------------------
+
+export function showModeSelect(menuOverlayElement, onChoose) {
+  function renderModeChoice() {
+    menuOverlayElement.innerHTML = '';
+    const panel = document.createElement('div');
+    panel.className = 'menu-panel';
+
+    const title = document.createElement('h2');
+    title.className = 'menu-panel-title';
+    title.textContent = 'Ultimate Fishing';
+    panel.appendChild(title);
+
+    const instructions = document.createElement('p');
+    instructions.className = 'menu-panel-text';
+    instructions.textContent = 'Choose how you want to play.';
+    panel.appendChild(instructions);
+
+    const buttonRow = document.createElement('div');
+    buttonRow.className = 'menu-button-row';
+
+    const onePlayerButton = document.createElement('button');
+    onePlayerButton.type = 'button';
+    onePlayerButton.className = 'menu-button';
+    onePlayerButton.textContent = '1 Player';
+    onePlayerButton.addEventListener('click', () => onChoose({ mode: '1p' }));
+    buttonRow.appendChild(onePlayerButton);
+
+    const twoPlayerButton = document.createElement('button');
+    twoPlayerButton.type = 'button';
+    twoPlayerButton.className = 'menu-button';
+    twoPlayerButton.textContent = '2 Player';
+    twoPlayerButton.addEventListener('click', renderEconomyModeChoice);
+    buttonRow.appendChild(twoPlayerButton);
+
+    panel.appendChild(buttonRow);
+    menuOverlayElement.appendChild(panel);
+    menuOverlayElement.classList.add('active');
+  }
+
+  function renderEconomyModeChoice() {
+    menuOverlayElement.innerHTML = '';
+    const panel = document.createElement('div');
+    panel.className = 'menu-panel';
+
+    const title = document.createElement('h2');
+    title.className = 'menu-panel-title';
+    title.textContent = '2 Player';
+    panel.appendChild(title);
+
+    const instructions = document.createElement('p');
+    instructions.className = 'menu-panel-text';
+    instructions.textContent = 'Share a wallet as a team, or compete for the biggest catch.';
+    panel.appendChild(instructions);
+
+    const buttonRow = document.createElement('div');
+    buttonRow.className = 'menu-button-row';
+
+    const teamButton = document.createElement('button');
+    teamButton.type = 'button';
+    teamButton.className = 'menu-button';
+    teamButton.textContent = 'Team';
+    teamButton.addEventListener('click', () => onChoose({ mode: '2p', economyMode: 'team' }));
+    buttonRow.appendChild(teamButton);
+
+    const competitiveButton = document.createElement('button');
+    competitiveButton.type = 'button';
+    competitiveButton.className = 'menu-button';
+    competitiveButton.textContent = 'Competitive';
+    competitiveButton.addEventListener('click', () => onChoose({ mode: '2p', economyMode: 'competitive' }));
+    buttonRow.appendChild(competitiveButton);
+
+    const backButton = document.createElement('button');
+    backButton.type = 'button';
+    backButton.className = 'menu-button menu-button-secondary';
+    backButton.textContent = 'Back';
+    backButton.addEventListener('click', renderModeChoice);
+    buttonRow.appendChild(backButton);
+
+    panel.appendChild(buttonRow);
+    menuOverlayElement.appendChild(panel);
+    menuOverlayElement.classList.add('active');
+  }
+
+  renderModeChoice();
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +529,56 @@ export function showMaps(menuOverlayElement, economy, onClose) {
   menuOverlayElement.classList.add('active');
 }
 
+// ---------------------------------------------------------------------------
+// Shared 2P menu (Player tabs + Shop/Fish Book/Maps for the selected player)
+// ---------------------------------------------------------------------------
+
+const SHARED_MENU_SCREENS = [['shop', 'Shop', buildShopPanel], ['book', 'Fish Book', buildBookPanel], ['maps', 'Maps', buildMapsPanel]];
+
+export function showSharedMenu(menuOverlayElement, players, onClose) {
+  let activeIndex = 0;
+  let activeScreen = 'shop';
+
+  function render() {
+    menuOverlayElement.innerHTML = '';
+    const wrapper = document.createElement('div');
+
+    if (players.length > 1) {
+      const tabs = document.createElement('div');
+      tabs.className = 'menu-player-tabs';
+      players.forEach((player, i) => {
+        const tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = `menu-button menu-button-secondary${i === activeIndex ? ' active' : ''}`;
+        tab.textContent = player.label;
+        tab.addEventListener('click', () => { activeIndex = i; render(); });
+        tabs.appendChild(tab);
+      });
+      wrapper.appendChild(tabs);
+    }
+
+    const screenTabs = document.createElement('div');
+    screenTabs.className = 'menu-button-row';
+    SHARED_MENU_SCREENS.forEach(([key, label]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `menu-button menu-button-secondary${key === activeScreen ? ' active' : ''}`;
+      button.textContent = label;
+      button.addEventListener('click', () => { activeScreen = key; render(); });
+      screenTabs.appendChild(button);
+    });
+    wrapper.appendChild(screenTabs);
+
+    const [, , buildPanel] = SHARED_MENU_SCREENS.find(([key]) => key === activeScreen);
+    wrapper.appendChild(buildPanel(players[activeIndex].economy, onClose));
+
+    menuOverlayElement.appendChild(wrapper);
+    menuOverlayElement.classList.add('active');
+  }
+
+  render();
+}
+
 // Shown while idle, since a free retrieve ends with no overlay to reach these from.
 export function createIdleMenuButtons(stageElement, menuOverlayElement, economy) {
   const closeToGame = () => {
@@ -481,7 +623,8 @@ function describeResult(result) {
   return { heading: 'No catch.', detail: '', note: null, variant: 'fail' };
 }
 
-export function showCatchResult(menuOverlayElement, result) {
+export function showCatchResult(menuOverlayElement, result, options = {}) {
+  const { showShopLinks = true } = options;
   const info = describeResult(result);
 
   const panel = document.createElement('div');
@@ -532,11 +675,13 @@ export function showCatchResult(menuOverlayElement, result) {
   });
   buttonRow.appendChild(restartButton);
 
-  appendMenuButtons(buttonRow, menuOverlayElement, () => storedEconomy, () => {
-    menuOverlayElement.innerHTML = '';
-    menuOverlayElement.appendChild(panel);
-    menuOverlayElement.classList.add('active');
-  });
+  if (showShopLinks) {
+    appendMenuButtons(buttonRow, menuOverlayElement, () => storedEconomy, () => {
+      menuOverlayElement.innerHTML = '';
+      menuOverlayElement.appendChild(panel);
+      menuOverlayElement.classList.add('active');
+    });
+  }
 
   panel.appendChild(buttonRow);
 
