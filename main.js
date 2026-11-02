@@ -280,13 +280,21 @@ function createPlayerController({ economy, originPoints, menuOverlayElement, sho
 // big touch button (see onActionPress/onActionRelease above) -- scoped per player so Player 1
 // and Player 2 track their own actionHeldAs independently. Not called anywhere yet; Task 9
 // wires this up for real 2P controllers.
+//
+// leftHeld/rightHeld track which aim key is physically down so that releasing one aim key
+// while the other is still held resumes aiming in the still-held key's direction instead of
+// snapping back to center -- e.g. hold left, tap-and-release right mid-charge should keep
+// aiming left, not zero out. On keydown the most recently pressed key still wins outright
+// (matching the touch/mouse aim's single-direction model), same as before this fix.
 function bindPlayerKeys(controller, { aimLeftKey, aimRightKey, actionKey }) {
   let actionHeldAs = null;
   let aimDirection = 0;
+  let leftHeld = false;
+  let rightHeld = false;
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    if (e.code === aimLeftKey) aimDirection = -1;
-    else if (e.code === aimRightKey) aimDirection = 1;
+    if (e.code === aimLeftKey) { leftHeld = true; aimDirection = -1; }
+    else if (e.code === aimRightKey) { rightHeld = true; aimDirection = 1; }
     else if (e.code === actionKey) {
       if (controller.isMenuIdle()) { actionHeldAs = 'cast'; controller.onActionPress(); }
       else { actionHeldAs = 'reel'; controller.onActionPress(); }
@@ -296,8 +304,10 @@ function bindPlayerKeys(controller, { aimLeftKey, aimRightKey, actionKey }) {
   });
   window.addEventListener('keyup', (e) => {
     if (e.code === aimLeftKey || e.code === aimRightKey) {
-      aimDirection = 0;
-      controller.onAim(0);
+      if (e.code === aimLeftKey) leftHeld = false;
+      else rightHeld = false;
+      aimDirection = rightHeld ? 1 : leftHeld ? -1 : 0;
+      controller.onAim(aimDirection);
     } else if (e.code === actionKey) {
       controller.onActionRelease();
       actionHeldAs = null;
