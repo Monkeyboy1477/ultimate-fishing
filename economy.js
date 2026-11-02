@@ -1,5 +1,5 @@
 // economy.js
-// Currency, gear tiers (rod/line/lure), and persistence for The Reel Deal's shop system.
+// Currency, gear tiers (rod/line/lure), and persistence for Ultimate Fishing's shop system.
 // Every catch is auto-sold for cash (see getSellPrice in fish.js); cash buys better gear,
 // which feeds real stat overrides into casting3d.js (rod), tension.js (line), and fish.js
 // (lure) — this file only owns the data and the save-game state, not the physics/bite logic.

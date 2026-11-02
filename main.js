@@ -1,4 +1,4 @@
-// The Reel Deal — core game loop and state machine.
+// Ultimate Fishing — core game loop and state machine.
 // This file is the integration point. It only orchestrates; the realism
 // (physics, fish AI, 3D rendering, UI) lives in the imported modules below,
 // each of which must conform to the API documented next to its import.
