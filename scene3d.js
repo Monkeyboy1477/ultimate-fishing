@@ -15,6 +15,11 @@ const MAX_ROD_YAW_RAD = degToRad(40);
 const MAX_CAMERA_YAW_RAD = degToRad(12);
 const CAMERA_PITCH_RAD = degToRad(CAMERA_PITCH_DEG);
 
+// The hand position has to sit inside the lower view frustum or the reel is off screen.
+// This is the single-player grip; createPlayerRig shifts it by the same x offset as its
+// own rodTip so a second rig's rod/hand stay in that rig's own frame, not the first rig's.
+const GRIP_POS = new THREE.Vector3(0.34, 1.46, -0.85);
+
 const BLANK_START = 0.22;
 const BLANK_SEGMENTS = 16;
 const BLANK_RADIAL = 6;
@@ -300,17 +305,18 @@ function createPlayerRig(scene, originPoints) {
   let cameraYaw = 0;
   let previousState = null;
 
-  // Rod geometry: per-rig, derived from this rig's own rodTip so a second rig with a different
-  // origin gets its own grip/length/yaw/pitch instead of sharing the single-player values.
-  // The hand position has to sit inside the lower view frustum or the reel is off screen.
-  const GRIP_POS = new THREE.Vector3(0.34, 1.46, -0.85);
-  const ROD_VECTOR = new THREE.Vector3(originPoints.rodTip.x, originPoints.rodTip.y, originPoints.rodTip.z).sub(GRIP_POS);
+  // Rod geometry: per-rig, derived from this rig's own rodTip (and a matching grip shift)
+  // so a second rig with a different origin gets its own grip/length/yaw/pitch instead of
+  // sharing the single-player values.
+  const gripOffsetX = originPoints.rodTip.x - ROD_TIP.x;
+  const gripPos = new THREE.Vector3(GRIP_POS.x + gripOffsetX, GRIP_POS.y, GRIP_POS.z);
+  const ROD_VECTOR = new THREE.Vector3(originPoints.rodTip.x, originPoints.rodTip.y, originPoints.rodTip.z).sub(gripPos);
   const ROD_LENGTH = ROD_VECTOR.length();
   const BASE_ROD_YAW = Math.atan2(-ROD_VECTOR.x, -ROD_VECTOR.z);
   const BASE_ROD_PITCH = Math.asin(ROD_VECTOR.y / ROD_LENGTH);
 
   function yawToward(x, z) {
-    const yaw = Math.atan2(-(x - GRIP_POS.x), -(z - GRIP_POS.z));
+    const yaw = Math.atan2(-(x - gripPos.x), -(z - gripPos.z));
     return clamp(yaw, BASE_ROD_YAW - MAX_ROD_YAW_RAD, BASE_ROD_YAW + MAX_ROD_YAW_RAD);
   }
 
@@ -430,7 +436,7 @@ function createPlayerRig(scene, originPoints) {
 
   function buildRod() {
     rodPivot = new THREE.Group();
-    rodPivot.position.copy(GRIP_POS);
+    rodPivot.position.copy(gripPos);
     rodPivot.rotation.order = 'YXZ';
     scene.add(rodPivot);
 
@@ -859,7 +865,7 @@ function createPlayerRig(scene, originPoints) {
       fishSide = -fishSide;
       fishSideTimer = 2.5 + Math.random() * 2.5;
     }
-    const toAngler = Math.atan2(-(GRIP_POS.z - fishPos.z), GRIP_POS.x - fishPos.x);
+    const toAngler = Math.atan2(-(gripPos.z - fishPos.z), gripPos.x - fishPos.x);
     fishYaw = damp(fishYaw, toAngler + fishSide * 1.15, 2.2, dt);
 
     const thrashFreq = (4 + stamina * 9) / (1 + fishLength * 0.22);
@@ -1086,7 +1092,7 @@ function createPlayerRig(scene, originPoints) {
           fishLeapTimer = 0.8 + Math.random() * 1.5;
           fishSplashTimer = 0;
           fishSideTimer = 0;
-          fishYaw = Math.atan2(-(GRIP_POS.z - fishPos.z), GRIP_POS.x - fishPos.x) + fishSide * 1.15;
+          fishYaw = Math.atan2(-(gripPos.z - fishPos.z), gripPos.x - fishPos.x) + fishSide * 1.15;
           splashAt(fishPos.x, 0, fishPos.z, 0.9);
         }
         updateFish(dt, time, fishStamina, tension, clamp(tensionState ? tensionState.distanceRemaining : 1, 0, 1));
