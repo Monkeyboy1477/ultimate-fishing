@@ -2,6 +2,7 @@
 // Owns #menu-overlay only. Does NOT touch #hud-overlay (render.js owns that).
 
 import { RARITY_TIER_NAMES } from './fish.js';
+import { isTouchDevice } from './touchControls.js';
 
 let storedCallbacks = null;
 let storedEconomy = null;
@@ -18,8 +19,9 @@ function buildStartScreen(menuOverlayElement, callbacks) {
 
   const instructions = document.createElement('p');
   instructions.className = 'menu-panel-text';
-  instructions.textContent =
-    'Hold the mouse button to cast, move left/right to aim, release to let it fly. Hold Space to reel in anytime — but ease off when a fish fights back or the line will snap.';
+  instructions.textContent = isTouchDevice()
+    ? 'Hold CAST, use the arrows to aim, and let go to let it fly. Hold REEL to reel in anytime — but ease off when a fish fights back or the line will snap.'
+    : 'Hold the mouse button to cast, move left/right to aim, release to let it fly. Hold Space to reel in anytime — but ease off when a fish fights back or the line will snap.';
 
   const buttonRow = document.createElement('div');
   buttonRow.className = 'menu-button-row';

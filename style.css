@@ -393,3 +393,100 @@ body {
 }
 
 .idle-shop-button[hidden] { display: none; }
+
+/* --- touchControls.js: on-screen buttons, hidden until body.touch --- */
+#touch-controls { display: none; }
+
+.touch #touch-controls.visible {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+.touch-button {
+  pointer-events: auto;
+  touch-action: none;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 800;
+  background: rgba(15, 32, 39, 0.72);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.touch-button.pressed { transform: scale(0.94); filter: brightness(1.35); }
+
+.touch-aim-group { display: flex; gap: 10px; }
+.touch-aim-group.disabled { opacity: 0.35; }
+.touch-aim { width: 64px; height: 64px; font-size: 1.3rem; }
+
+.touch-action {
+  width: 104px;
+  height: 104px;
+  font-size: 1.2rem;
+  letter-spacing: 0.04em;
+  color: var(--color-ui-bg);
+  background: var(--color-ui-accent);
+  border-color: #fff;
+}
+
+.touch-action.reel { color: #fff; background: #1e8a6e; }
+
+/* --- Phone and tablet layout: the game fills the screen with no page scrolling --- */
+.touch,
+.touch #game-canvas {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.touch { overflow: hidden; overscroll-behavior: none; }
+
+.touch #app { height: 100dvh; min-height: 0; }
+
+.touch .ad-slot,
+.touch #bottom-bar { display: none; }
+
+.touch #top-bar {
+  padding: 4px max(12px, env(safe-area-inset-right)) 4px max(12px, env(safe-area-inset-left));
+}
+
+.touch #top-bar h1 { font-size: 0.95rem; white-space: nowrap; }
+.touch #hud-summary { white-space: nowrap; overflow: hidden; }
+.touch #hud-summary span { margin-left: 10px; font-size: 0.75rem; }
+.touch #best-catch { display: none; }
+
+.touch #game-layout { padding: 0; gap: 0; min-height: 0; }
+.touch #game-stage { width: 100%; height: 100%; }
+
+.touch #game-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  touch-action: none;
+}
+
+.touch .hud-power-panel { left: 50%; bottom: 14px; width: 30%; transform: translateX(-50%); }
+.touch .hud-reel-hint { bottom: 20px; }
+.touch .hud-fight-panel { top: 8px; right: 8px; width: 40%; padding: 5px 8px; font-size: 0.68rem; }
+
+.touch .menu-panel { padding: 14px 18px; max-height: 96%; overflow-y: auto; }
+.touch .menu-panel-text { font-size: 0.85rem; margin-bottom: 10px; }
+.touch .menu-button { min-height: 44px; }
+.touch .gear-card-button { min-height: 40px; }
+
+/* Upright phones: a square view on top, with the buttons in their own band below it. */
+@media (orientation: portrait) {
+  .touch #game-canvas { height: auto; aspect-ratio: 1; }
+  .touch #hud-overlay { bottom: auto; aspect-ratio: 1; width: 100%; }
+  .touch #touch-controls.visible { align-items: flex-end; padding-bottom: max(40px, env(safe-area-inset-bottom)); }
+  .touch .touch-aim { width: 76px; height: 76px; }
+  .touch .touch-action { width: 124px; height: 124px; }
+}

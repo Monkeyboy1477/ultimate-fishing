@@ -489,6 +489,7 @@ export function renderHUD(hudElement, state) {
   refs.powerPanel.classList.toggle('visible', isCharging);
   refs.fightPanel.classList.toggle('visible', isFighting);
   refs.reelHint.classList.toggle('visible', state.state === 'waiting_bite');
+  refs.reelHint.textContent = state.touch ? 'Hold REEL to reel in' : 'Hold Space to reel in';
 
   if (isCharging) {
     const power = Math.max(0, Math.min(1, state.chargePower ?? 0));

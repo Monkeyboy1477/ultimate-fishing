@@ -9,7 +9,7 @@ import { buildWorld, updateWorld } from './world3d.js';
 import { EYE_POS, CAMERA_PITCH_DEG, ROD_TIP, HOME_POINT } from './constants.js';
 import { createFishModel, createLureModel } from './fishModels.js';
 
-const { clamp, damp, degToRad, lerp } = THREE.MathUtils;
+const { clamp, damp, degToRad, lerp, radToDeg } = THREE.MathUtils;
 
 const MAX_ROD_YAW_RAD = degToRad(40);
 const MAX_CAMERA_YAW_RAD = degToRad(12);
@@ -424,6 +424,9 @@ function buildEffects() {
   scene.add(dropletPoints);
 }
 
+const BASE_FOV_DEG = 58;
+const BASE_ASPECT = 3 / 2;
+
 export function initScene(canvas) {
   // setSize below rewrites canvas.width and canvas.height when the pixel ratio isn't 1.
   const width = canvas.width;
@@ -436,7 +439,7 @@ export function initScene(canvas) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
 
-  camera = new THREE.PerspectiveCamera(58, width / height, 0.1, 1500);
+  camera = new THREE.PerspectiveCamera(BASE_FOV_DEG, width / height, 0.1, 1500);
   camera.rotation.order = 'YXZ';
   camera.position.set(EYE_POS.x, EYE_POS.y, EYE_POS.z);
   camera.rotation.x = CAMERA_PITCH_RAD;
@@ -452,6 +455,18 @@ export function initScene(canvas) {
   clock = new THREE.Clock();
   started = true;
   return { renderer, scene, camera };
+}
+
+// Matches the view for screens narrower than the desktop's 3:2, so the rod stays in frame.
+export function resizeScene(width, height) {
+  if (!renderer) return;
+  const aspect = width / height;
+  renderer.setSize(width, height, false);
+  camera.aspect = aspect;
+  camera.fov = aspect >= BASE_ASPECT
+    ? BASE_FOV_DEG
+    : radToDeg(2 * Math.atan(Math.tan(degToRad(BASE_FOV_DEG / 2)) * (BASE_ASPECT / aspect)));
+  camera.updateProjectionMatrix();
 }
 
 // ---------------------------------------------------------------------------

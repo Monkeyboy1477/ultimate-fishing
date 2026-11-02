@@ -7,11 +7,12 @@ import { CastController, isLureHome, retrieveSpeedFor, stepRetrieve } from './ca
 import { LineTensionSystem, fightTiming, stepFight } from './tension.js';
 import { FISH_SPECIES, trySpawnBite, HookedFish, getSellPrice } from './fish.js';
 import { HOME_POINT } from './constants.js';
-import { initScene, renderScene3D, spawnSplash3D } from './scene3d.js';
+import { initScene, renderScene3D, resizeScene, spawnSplash3D } from './scene3d.js';
 import { renderHUD } from './render.js';
 import { initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleShopButton } from './ui.js';
 import { createEconomy } from './economy.js';
 import { installAudio } from './audio.js';
+import { installTouchControls, isTouchDevice } from './touchControls.js';
 
 const canvas = document.getElementById('game-canvas');
 const hudOverlay = document.getElementById('hud-overlay');
@@ -65,9 +66,11 @@ initScene(canvas);
 // camera itself stays fixed — aim is conveyed by the rod/reticle, like a
 // first-person weapon, so there's no pointer-lock/mouselook complexity.
 const MAX_AIM_ANGLE_DEG = 40;
+const TOUCH_AIM_DEG_PER_S = 45;
 
-let charging = false;
+let castPointerId = null; // the mouse or finger holding the canvas to charge a cast
 let aimAngleDeg = 0;
+let touchAimDirection = 0;
 
 function aimAngleFromEvent(e) {
   const rect = canvas.getBoundingClientRect();
@@ -76,45 +79,109 @@ function aimAngleFromEvent(e) {
   return (clamped - 0.5) * 2 * MAX_AIM_ANGLE_DEG;
 }
 
-canvas.addEventListener('mousedown', (e) => {
-  if (game.state !== STATE.MENU && game.state !== STATE.RESULT) return;
-  charging = true;
+function canStartCast() {
+  return game.state === STATE.MENU || game.state === STATE.RESULT;
+}
+
+function startCast() {
   game.state = STATE.CHARGING;
-  aimAngleDeg = aimAngleFromEvent(e);
   castController = new CastController(economy.getEquippedStats('rod'));
   castController.startCharging();
-});
+}
 
-canvas.addEventListener('mousemove', (e) => {
-  if (!charging) return;
-  aimAngleDeg = aimAngleFromEvent(e);
-});
-
-window.addEventListener('mouseup', () => {
+function releaseCast() {
   if (game.state !== STATE.CHARGING) return;
-  charging = false;
   game.cast = castController.release(aimAngleDeg);
   game.castElapsed = 0;
   game.sinceRelease = 0;
   game.cutCast = false;
   game.state = STATE.CAST_FLIGHT;
+}
+
+function startReel(isFreshPress = true) {
+  game.reelInput = 1;
+  if (game.state === STATE.CAST_FLIGHT && isFreshPress) game.cutCast = true;
+}
+
+function stopReel() {
+  game.reelInput = 0;
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (!canStartCast()) return;
+  castPointerId = e.pointerId;
+  aimAngleDeg = aimAngleFromEvent(e);
+  startCast();
 });
+
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== castPointerId) return;
+  aimAngleDeg = aimAngleFromEvent(e);
+});
+
+function endCanvasCast(e) {
+  if (e.pointerId !== castPointerId) return;
+  castPointerId = null;
+  releaseCast();
+}
+window.addEventListener('pointerup', endCanvasCast);
+window.addEventListener('pointercancel', endCanvasCast);
 
 // Reel input: Space is tracked in every state, so a hold carries from retrieve into a fight.
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Space') return;
   e.preventDefault();
-  game.reelInput = 1;
-  if (game.state === STATE.CAST_FLIGHT && !e.repeat) game.cutCast = true;
+  startReel(!e.repeat);
 });
 window.addEventListener('keyup', (e) => {
   if (e.code !== 'Space') return;
   e.preventDefault();
-  game.reelInput = 0;
+  stopReel();
 });
-window.addEventListener('blur', () => {
-  game.reelInput = 0;
+window.addEventListener('blur', stopReel);
+
+// The one big button casts when the lure is home and reels otherwise. What it does is fixed
+// when it's pressed, so a held REEL that brings the lure home doesn't turn into a cast.
+let actionHeldAs = null;
+
+const touchControls = installTouchControls(document.getElementById('game-stage'), {
+  onActionPress: () => {
+    if (canStartCast()) {
+      actionHeldAs = 'cast';
+      startCast();
+    } else {
+      actionHeldAs = 'reel';
+      startReel();
+    }
+  },
+  onActionRelease: () => {
+    if (actionHeldAs === 'cast') releaseCast();
+    if (actionHeldAs === 'reel') stopReel();
+    actionHeldAs = null;
+  },
+  onAim: (direction) => {
+    touchAimDirection = direction;
+  },
 });
+
+// Phones fill the screen, so the 3D view has to follow the stage's shape.
+function fitSceneToCanvas() {
+  const { clientWidth, clientHeight } = canvas;
+  if (clientWidth > 0 && clientHeight > 0) resizeScene(clientWidth, clientHeight);
+}
+
+function enableTouchLayout() {
+  if (document.body.classList.contains('touch')) return;
+  document.body.classList.add('touch');
+  new ResizeObserver(fitSceneToCanvas).observe(canvas);
+  fitSceneToCanvas();
+}
+
+// Touchscreen laptops report a mouse, so their first touch switches the layout on as well.
+if (isTouchDevice()) enableTouchLayout();
+window.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') enableTouchLayout();
+}, { capture: true });
 
 function returnLureHome() {
   game.hookedFish = null;
@@ -165,6 +232,10 @@ function update(dt) {
   switch (game.state) {
     case STATE.CHARGING: {
       castController.updateCharge(dt);
+      aimAngleDeg = Math.max(
+        -MAX_AIM_ANGLE_DEG,
+        Math.min(MAX_AIM_ANGLE_DEG, aimAngleDeg + touchAimDirection * TOUCH_AIM_DEG_PER_S * dt),
+      );
       break;
     }
     case STATE.CAST_FLIGHT: {
@@ -251,9 +322,16 @@ function render() {
     chargePower: castController.currentPower,
     tensionState: game.tensionState,
     hookedFish: game.hookedFish,
+    touch: document.body.classList.contains('touch'),
   });
 
-  idleShopButton.hidden = game.state !== STATE.MENU || menuOverlay.classList.contains('active');
+  const menuOpen = menuOverlay.classList.contains('active');
+  idleShopButton.hidden = game.state !== STATE.MENU || menuOpen;
+  touchControls.update({
+    label: canStartCast() || game.state === STATE.CHARGING ? 'CAST' : 'REEL',
+    visible: !menuOpen,
+    aimEnabled: canStartCast() || game.state === STATE.CHARGING,
+  });
 }
 
 initMenus(menuOverlay, {

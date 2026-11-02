@@ -259,4 +259,6 @@ export function installAudio(stageElement) {
   // Browsers only allow audio to begin after a user gesture.
   window.addEventListener('pointerdown', start);
   window.addEventListener('keydown', start);
+  // iPhones only count the end of a touch as that gesture.
+  window.addEventListener('touchend', start);
 }
