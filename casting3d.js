@@ -24,13 +24,16 @@ export class CastController {
   // rodStats: optional { maxDistance, powerExponent } from the equipped rod's shop tier.
   // Defaults match the original single-tier behavior exactly when omitted.
   // map: optional, keeps the cast inside that map's water however strong the rod is.
-  constructor(rodStats, map) {
+  // originPoint: optional, lets a second player cast from their own world-space rod tip
+  // instead of the single-player ROD_TIP. Defaults to ROD_TIP, matching today's behavior.
+  constructor(rodStats, map, originPoint = ROD_TIP) {
     this.charging = false; // true while mouse is held down, aiming
     this.chargeTime = 0; // seconds elapsed since startCharging()
     this.currentPower = 0; // 0..1, read directly by the HUD every frame
     this.maxDistance = Math.min(rodStats?.maxDistance ?? MAX_CAST_DISTANCE_M, map?.maxCastM ?? Infinity);
     this.maxLateral = map?.maxLateralM ?? MAX_LATERAL_M;
     this.distancePowerExponent = rodStats?.powerExponent ?? DISTANCE_POWER_EXPONENT;
+    this.origin = originPoint;
   }
 
   startCharging() {
@@ -66,11 +69,16 @@ export class CastController {
       Math.min(this.maxLateral, rawLateral)
     );
 
-    const landingPoint = { x: landingLateral, y: 0, z: -landingDistance };
+    // landingLateral/landingDistance are measured from the single-player center line
+    // (ROD_TIP's own baseline); shift them by however far this.origin sits from ROD_TIP so a
+    // second player casting from a different origin lands offset by that same amount.
+    const originOffsetX = this.origin.x - ROD_TIP.x;
+    const originOffsetZ = this.origin.z - ROD_TIP.z;
+    const landingPoint = { x: landingLateral + originOffsetX, y: 0, z: -landingDistance + originOffsetZ };
 
     // --- Build a real parabolic projectile arc from the rod tip to landingPoint ---
-    const dx = landingPoint.x - ROD_TIP.x;
-    const dz = landingPoint.z - ROD_TIP.z;
+    const dx = landingPoint.x - this.origin.x;
+    const dz = landingPoint.z - this.origin.z;
     const horizontalDist = Math.sqrt(dx * dx + dz * dz);
     const dirX = horizontalDist > 0 ? dx / horizontalDist : 0;
     const dirZ = horizontalDist > 0 ? dz / horizontalDist : -1;
@@ -86,7 +94,7 @@ export class CastController {
     //   y(t) = h0 + v0*sin(theta)*t - 0.5*g*t^2 = 0
     //   x(t) = v0*cos(theta)*t = horizontalDist
     // Substituting t = horizontalDist / (v0*cos(theta)) into the y equation and solving for v0^2:
-    const h0 = ROD_TIP.y;
+    const h0 = this.origin.y;
     const cosT = Math.cos(theta);
     const sinT = Math.sin(theta);
     const denom = h0 + horizontalDist * Math.tan(theta);
@@ -105,9 +113,9 @@ export class CastController {
       const clampedT = Math.max(0, Math.min(t, flightDuration));
       const travelled = vHoriz * clampedT;
       return {
-        x: ROD_TIP.x + dirX * travelled,
+        x: this.origin.x + dirX * travelled,
         y: h0 + v0 * sinT * clampedT - 0.5 * GRAVITY * clampedT * clampedT,
-        z: ROD_TIP.z + dirZ * travelled,
+        z: this.origin.z + dirZ * travelled,
       };
     };
 
@@ -125,25 +133,25 @@ export class CastController {
 
 // --- Free retrieve -----------------------------------------------------------
 
-function horizontalDistanceToHome(pos) {
-  return Math.hypot(pos.x - HOME_POINT.x, pos.z - HOME_POINT.z);
+function horizontalDistanceToHome(pos, homePoint = HOME_POINT) {
+  return Math.hypot(pos.x - homePoint.x, pos.z - homePoint.z);
 }
 
-// A lure cut off right after release can still be over the dock, shoreward of HOME_POINT.
-export function isLureHome(pos) {
-  return pos.z >= HOME_POINT.z || horizontalDistanceToHome(pos) <= HOME_RADIUS_M;
+// A lure cut off right after release can still be over the dock, shoreward of homePoint.
+export function isLureHome(pos, homePoint = HOME_POINT) {
+  return pos.z > homePoint.z || horizontalDistanceToHome(pos, homePoint) <= HOME_RADIUS_M;
 }
 
-export function retrieveSpeedFor(pos) {
-  return Math.max(MIN_RETRIEVE_SPEED_MPS, horizontalDistanceToHome(pos) / MAX_RETRIEVE_S);
+export function retrieveSpeedFor(pos, homePoint = HOME_POINT) {
+  return Math.max(MIN_RETRIEVE_SPEED_MPS, horizontalDistanceToHome(pos, homePoint) / MAX_RETRIEVE_S);
 }
 
-export function stepRetrieve(pos, speed, dt) {
-  const distance = horizontalDistanceToHome(pos);
+export function stepRetrieve(pos, speed, dt, homePoint = HOME_POINT) {
+  const distance = horizontalDistanceToHome(pos, homePoint);
   const fraction = distance > 0 ? Math.min(1, (speed * dt) / distance) : 0;
   return {
-    x: pos.x + (HOME_POINT.x - pos.x) * fraction,
+    x: pos.x + (homePoint.x - pos.x) * fraction,
     y: 0,
-    z: pos.z + (HOME_POINT.z - pos.z) * fraction,
+    z: pos.z + (homePoint.z - pos.z) * fraction,
   };
 }
