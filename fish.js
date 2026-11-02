@@ -1,6 +1,6 @@
 // fish.js
 // Species data, bite spawning, and the HookedFish fight-simulation model for
-// Ultimate Fishing. Fish are meant to feel like distinct living creatures: each
+// The Reel Deal. Fish are meant to feel like distinct living creatures: each
 // species has its own weight range, toughness, and "pullPattern" that drives
 // how its pull vector is generated frame to frame during the fight.
 

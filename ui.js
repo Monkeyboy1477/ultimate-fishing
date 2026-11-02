@@ -1,4 +1,4 @@
-// ui.js — start screen, catch-result overlay, and shop for Ultimate Fishing.
+// ui.js — start screen, catch-result overlay, and shop for The Reel Deal.
 // Owns #menu-overlay only. Does NOT touch #hud-overlay (render.js owns that).
 
 import { FISH_SPECIES, RARITY_TIER_NAMES, canLureHook } from './fish.js';
@@ -34,7 +34,7 @@ function buildStartScreen(menuOverlayElement, callbacks) {
 
   const title = document.createElement('h2');
   title.className = 'menu-panel-title';
-  title.textContent = 'Ultimate Fishing';
+  title.textContent = 'The Reel Deal';
 
   const instructions = document.createElement('p');
   instructions.className = 'menu-panel-text';

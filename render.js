@@ -1,4 +1,4 @@
-// Ultimate Fishing — render.js
+// The Reel Deal — render.js
 // Canvas rendering (renderScene, spawnSplash) + DOM HUD overlay (renderHUD).
 // Pure presentation: reads game state handed in by main.js, draws it.
 // Visual priority: legible mechanics (cast arc, line tension, fish fight)
