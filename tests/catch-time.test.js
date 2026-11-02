@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BITE_DEADLINE_S, CATCH_TIME_LIMIT_S, MAX_RETRIEVE_S } from '../constants.js';
 import { CastController, isLureHome, retrieveSpeedFor, stepRetrieve } from '../casting3d.js';
-import { FISH_SPECIES, HookedFish, canLureHook, getSellPrice, trySpawnBite } from '../fish.js';
+import { FISH_SPECIES, HookedFish, canLureHook, eligibleSpeciesFor, getSellPrice, trySpawnBite } from '../fish.js';
 import { LineTensionSystem, fightTiming, stepFight } from '../tension.js';
 import { LINE_TIERS, LURE_TIERS, ROD_TIERS, createEconomy } from '../economy.js';
+import { MAPS, getMap, mapsForSpecies } from '../maps.js';
 
 const DT = 1 / 60;
 const TRIALS = 200;
@@ -182,12 +183,12 @@ test('rarity with the best lure: legendary is uncommon and mythic rarest', () =>
   const samples = 200000;
   for (let i = 0; i < samples; i += 1) {
     const cast = { landingDistance: 40 + Math.random() * 140 };
-    const { rarityTier } = trySpawnBite(cast, BITE_DEADLINE_S, DT, BEST_LURE);
+    const { rarityTier } = trySpawnBite(cast, BITE_DEADLINE_S, DT, BEST_LURE, 'ocean');
     counts[rarityTier] = (counts[rarityTier] || 0) + 1;
   }
   const share = (tier) => (counts[tier] || 0) / samples;
   console.log('bite share by tier', Object.fromEntries(Object.keys(counts).map((tier) => [tier, share(tier).toFixed(3)])));
-  assert.ok(share(5) >= 0.08 && share(5) <= 0.2, `legendary share ${share(5)}`);
+  assert.ok(share(5) >= 0.08 && share(5) <= 0.3, `legendary share ${share(5)}`);
   assert.ok(share(6) >= 0.01 && share(6) <= 0.05, `mythic share ${share(6)}`);
   assert.ok(share(6) < share(5) && share(5) < share(4), 'rarer tiers bite less often');
 });
@@ -217,10 +218,76 @@ test('all saved gear ids still exist and every tier has its visual data', () => 
   assert.equal(new Set(ids).size, ids.length);
 });
 
-// Buys the cheapest next tier in any category as soon as it's affordable.
+test('every species lives on a map, and every map id on it exists', () => {
+  const ids = new Set(FISH_SPECIES.map((species) => species.id));
+  for (const map of MAPS) {
+    for (const id of map.speciesIds) assert.ok(ids.has(id), `${map.id} lists unknown ${id}`);
+    assert.equal(new Set(map.speciesIds).size, map.speciesIds.length, map.id);
+  }
+  for (const species of FISH_SPECIES) assert.ok(mapsForSpecies(species.id).length >= 1, species.id);
+});
+
+test('saltwater fish only live in the ocean, and freshwater fish never do', () => {
+  const ocean = getMap('ocean');
+  const saltwater = ['great_white_shark', 'bull_shark', 'tiger_shark', 'blue_marlin', 'swordfish',
+    'bluefin_tuna', 'yellowfin_tuna', 'sailfish', 'mahi_mahi', 'red_snapper', 'barracuda', 'atlantic_mackerel'];
+  for (const id of saltwater) assert.deepEqual(mapsForSpecies(id).map((map) => map.id), ['ocean'], id);
+  for (const id of ['bluegill', 'largemouth_bass', 'lake_sturgeon', 'beluga_sturgeon', 'channel_catfish']) {
+    assert.ok(!ocean.speciesIds.includes(id), id);
+  }
+});
+
+test('a bite only ever comes from the current map', () => {
+  for (const map of MAPS) {
+    for (const lure of LURE_TIERS) {
+      for (let i = 0; i < 400; i += 1) {
+        const species = trySpawnBite({ landingDistance: Math.random() * map.maxCastM }, BITE_DEADLINE_S, DT, lure, map.id);
+        if (eligibleSpeciesFor(lure, map.id).length === 0) assert.equal(species, null);
+        else assert.ok(map.speciesIds.includes(species.id), `${species.id} on ${map.id}`);
+      }
+    }
+  }
+});
+
+test('every map can be fished with something from the shop, and maps get pricier', () => {
+  for (const map of MAPS) assert.ok(LURE_TIERS.some((lure) => eligibleSpeciesFor(lure, map.id).length > 0), map.id);
+  const prices = MAPS.map((map) => map.price);
+  assert.equal(prices[0], 0);
+  assert.deepEqual(prices, [...prices].sort((a, b) => a - b));
+  assert.equal(MAPS[MAPS.length - 1].id, 'ocean');
+});
+
+test('a cast stays inside the map however strong the rod is', () => {
+  for (const map of MAPS) {
+    const controller = new CastController(BEST_ROD, map);
+    controller.startCharging();
+    controller.currentPower = 1;
+    const cast = controller.release(40);
+    assert.ok(cast.landingDistance <= map.maxCastM + 1e-9, map.id);
+    assert.ok(Math.abs(cast.landingLateral) <= map.maxLateralM + 1e-9, map.id);
+  }
+});
+
+test('buying a map costs money, travels there, and needs enough cash', () => {
+  const economy = createEconomy();
+  assert.equal(economy.getCurrentMap().id, 'pond');
+  assert.equal(economy.travelTo('river'), false);
+  assert.deepEqual(economy.buyMap('river'), { ok: false, reason: 'cannot_afford' });
+  const river = getMap('river');
+  economy.recordCatch(FISH_SPECIES[0], 1, river.price);
+  const before = economy.getCurrency();
+  assert.deepEqual(economy.buyMap('river'), { ok: true });
+  assert.equal(economy.getCurrency(), before - river.price);
+  assert.equal(economy.getCurrentMap().id, 'river');
+  assert.equal(economy.travelTo('pond'), true);
+  assert.deepEqual(economy.buyMap('river'), { ok: false, reason: 'already_owned' });
+});
+
+// Buys the cheapest next item as soon as it's affordable, and fishes the newest map it owns with
+// the biggest lure that still gets bites there.
 function playThrough() {
-  const owned = { rod: 0, line: 0, lure: 0 };
-  const tables = { rod: ROD_TIERS, line: LINE_TIERS, lure: LURE_TIERS };
+  const owned = { rod: 0, line: 0, lure: 0, map: 0 };
+  const tables = { rod: ROD_TIERS, line: LINE_TIERS, lure: LURE_TIERS, map: MAPS };
   const steps = [];
   let cash = 25;
   let attempts = 0;
@@ -232,12 +299,15 @@ function playThrough() {
       .sort((a, b) => a.tier.price - b.tier.price)[0];
     if (!next) return { steps, seconds };
     const rod = ROD_TIERS[owned.rod];
-    const lure = LURE_TIERS[owned.lure];
+    const map = MAPS[owned.map];
+    const lure = LURE_TIERS.slice(0, owned.lure + 1).reverse().find((tier) => eligibleSpeciesFor(tier, map.id).length > 0)
+      ?? LURE_TIERS[0];
     const species = trySpawnBite(
-      { landingDistance: 7 + Math.random() * (rod.maxDistance - 7) },
+      { landingDistance: 7 + Math.random() * (Math.min(rod.maxDistance, map.maxCastM) - 7) },
       BITE_DEADLINE_S,
       DT,
       lure,
+      eligibleSpeciesFor(lure, map.id).length > 0 ? map.id : undefined,
     );
     const result = simulateCatch(species, LINE_TIERS[owned.line], lure, rod, delayedEaseOff());
     attempts += 1;

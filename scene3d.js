@@ -5,7 +5,7 @@
 // aimAngleDeg: 0 = straight out along -Z, positive = right (+X).
 
 import * as THREE from 'three';
-import { buildWorld, updateWorld } from './world3d.js';
+import { buildWorld, setWorldMap, updateWorld } from './world3d.js';
 import { EYE_POS, CAMERA_PITCH_DEG, ROD_TIP, HOME_POINT } from './constants.js';
 import { createFishModel, createLureModel } from './fishModels.js';
 
@@ -49,6 +49,7 @@ let camera = null;
 let scene = null;
 let clock = null;
 let started = false;
+let worldMapId = null;
 
 let cameraYaw = 0;
 let previousState = null;
@@ -1055,6 +1056,11 @@ export function renderScene3D(frameState) {
     time = 0,
   } = frame;
 
+  const mapId = frame.mapId || 'pond';
+  if (mapId !== worldMapId) {
+    worldMapId = mapId;
+    setWorldMap(mapId);
+  }
   const dt = Math.min(clock ? clock.getDelta() : 0.016, 0.05);
   updateWorld(dt, time);
   applyGear(frame.gear);

@@ -485,7 +485,317 @@ function sharkSkin(ctx, back, flank, belly, line, jagged) {
   ctx.fill();
 }
 
+// Spots ringed by a pale halo (brown trout).
+function haloSpots(ctx, count, core, halo, u0, u1, v0, v1, r0, r1) {
+  for (let i = 0; i < count; i += 1) {
+    const r = r0 + Math.random() * (r1 - r0);
+    const x = px(u0 + Math.random() * (u1 - u0));
+    const y = py(v0 + Math.random() * (v1 - v0));
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.9, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = core(i);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fill();
+  }
+}
+
+// Wavy dark bars running down from the back (mackerel).
+function waveBars(ctx, u0, u1, step, vTop, vBottom, color, width) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  for (let u = u0; u < u1; u += step) {
+    ctx.beginPath();
+    for (let k = 0; k <= 12; k += 1) {
+      const t = k / 12;
+      const v = vTop + (vBottom - vTop) * t;
+      const x = px(u + Math.sin(t * 9 + u * 60) * 0.006);
+      if (k === 0) ctx.moveTo(x, py(v));
+      else ctx.lineTo(x, py(v));
+    }
+    ctx.stroke();
+  }
+}
+
+// Vertical bars that fade out toward the belly (tiger shark).
+function fadingBars(ctx, u0, u1, step, vTop, vFade, color) {
+  for (let u = u0; u < u1; u += step) {
+    const w = 8 + Math.random() * 7;
+    const g = ctx.createLinearGradient(0, py(vTop), 0, py(vFade));
+    g.addColorStop(0, color);
+    g.addColorStop(1, 'rgba(20,22,24,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(px(u), py(vTop));
+    ctx.lineTo(px(u) + w, py(vTop));
+    ctx.quadraticCurveTo(px(u) + w + 6, py((vTop + vFade) / 2), px(u) + w * 0.4, py(vFade));
+    ctx.quadraticCurveTo(px(u) - 6, py((vTop + vFade) / 2), px(u), py(vTop));
+    ctx.fill();
+  }
+}
+
+// A small round dot on both faces of a fin.
+function finDots(p, pts, radius, color) {
+  for (const [u, h] of pts) {
+    const { top } = p.profile.at(u);
+    for (const z of [0.0015, -0.0015]) {
+      const dot = new THREE.CircleGeometry(radius, 8);
+      dot.translate(p.profile.x(u), top * 0.92 + h, z);
+      p.add(dot, color);
+    }
+  }
+}
+
 const SPECIES = {
+  pumpkinseed: {
+    length: 0.15, refWeight: 0.4, leaps: false, start: 0, end: 0.84,
+    stations: [[0, 0.012, 0.014, 0.01], [0.06, 0.055, 0.058, 0.03], [0.2, 0.165, 0.165, 0.055], [0.46, 0.225, 0.215, 0.066], [0.72, 0.15, 0.14, 0.05], [0.92, 0.055, 0.05, 0.02], [1, 0.04, 0.035, 0.012]],
+    paint(ctx) {
+      skin(ctx, '#4a5a2c', '#a39a46', '#e8892f', 0.45);
+      spots(ctx, 60, 'rgba(200,100,30,0.55)', 0.3, 0.95, 0.35, 0.85, 2, 4);
+      spots(ctx, 40, 'rgba(60,90,70,0.4)', 0.3, 0.95, 0.5, 0.95, 1.5, 3);
+      bars(ctx, [0.32, 0.42, 0.52, 0.62, 0.72], 0.025, 'rgba(40,60,50,0.22)', 0.3);
+      // Wavy blue-green streaks across the cheek.
+      ctx.strokeStyle = 'rgba(70,170,200,0.9)';
+      ctx.lineWidth = 2.4;
+      for (const v of [0.38, 0.47, 0.56]) {
+        ctx.beginPath();
+        ctx.moveTo(px(0.05), py(v));
+        for (let k = 1; k <= 8; k += 1) ctx.lineTo(px(0.05 + k * 0.016), py(v + Math.sin(k * 1.6) * 0.02 - k * 0.004));
+        ctx.stroke();
+      }
+      // Black ear flap tipped with a red-orange spot.
+      ctx.fillStyle = '#10141b';
+      ctx.beginPath();
+      ctx.ellipse(px(0.26), py(0.62), 15, 17, 0, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#e0431c';
+      ctx.beginPath();
+      ctx.ellipse(px(0.285), py(0.6), 7, 10, 0, 0, TAU);
+      ctx.fill();
+      gillCover(ctx, 0.23);
+      mouthLine(ctx, 0.07, 0.46);
+    },
+    parts(p) {
+      fishCommon(p, { eyeU: 0.14, eyeV: 0.65, eyeR: 0.024, fin: 0xb88a48 });
+      p.dorsal([[0.25, -0.01], [0.3, 0.075], [0.55, 0.07], [0.7, 0.05], [0.8, -0.005]], 0x6b6a35);
+      p.anal([[0.6, -0.01], [0.66, 0.06], [0.82, 0.03], [0.86, -0.005]], 0xc9843a);
+      forkedTail(p, 1, 0.036, 0.1, 0.17, 0.86, 0xb5883f);
+    },
+  },
+  black_crappie: {
+    length: 0.3, refWeight: 1, leaps: false, start: 0, end: 0.84,
+    stations: [[0, 0.012, 0.016, 0.01], [0.06, 0.06, 0.062, 0.028], [0.2, 0.18, 0.17, 0.05], [0.45, 0.245, 0.23, 0.058], [0.72, 0.17, 0.15, 0.045], [0.92, 0.06, 0.055, 0.02], [1, 0.04, 0.035, 0.01]],
+    paint(ctx) {
+      skin(ctx, '#4b5b43', '#b6c1ab', '#eef0e4', 0.5);
+      spots(ctx, 130, 'rgba(24,30,24,0.8)', 0.14, 0.98, 0.15, 1, 2.2, 5.5);
+      gillCover(ctx, 0.22, 'rgba(20,24,20,0.5)');
+      mouthLine(ctx, 0.09, 0.47);
+    },
+    parts(p) {
+      fishCommon(p, { eyeU: 0.12, eyeV: 0.66, eyeR: 0.025, fin: 0x9aa58f });
+      p.dorsal([[0.46, -0.01], [0.5, 0.1], [0.7, 0.085], [0.8, -0.005]], 0x6f7e63);
+      p.anal([[0.48, -0.01], [0.53, 0.095], [0.74, 0.06], [0.85, -0.005]], 0x8a9780);
+      forkedTail(p, 1, 0.036, 0.1, 0.17, 0.82, 0x7d8b72);
+      finDots(p, [[0.55, 0.05], [0.62, 0.055], [0.68, 0.04]], 0.004, 0x1c241c);
+    },
+  },
+  brown_bullhead: {
+    length: 0.3, refWeight: 1.5, leaps: false, start: 0, end: 0.86,
+    stations: [[0, 0.012, 0.02, 0.024], [0.08, 0.036, 0.04, 0.074], [0.22, 0.068, 0.065, 0.085], [0.5, 0.078, 0.072, 0.06], [0.8, 0.055, 0.05, 0.03], [1, 0.03, 0.03, 0.012]],
+    paint(ctx) {
+      skin(ctx, '#5a4a28', '#8c7640', '#e4d49a', 0.34);
+      spots(ctx, 50, 'rgba(30,24,12,0.35)', 0.1, 1, 0.4, 1, 3, 8);
+      mouthLine(ctx, 0.06, 0.34, 'rgba(10,10,10,0.8)', 4);
+    },
+    parts(p) {
+      p.eye(0.09, 0.76, 0.008, 0xb8ad80);
+      p.sideFins(0.24, 0.2, pectoral(0.07, 0.05), 1.05, 0x6a5832);
+      p.sideFins(0.55, 0.05, pectoral(0.05, 0.04), 1.2, 0x6a5832);
+      p.dorsal([[0.27, -0.01], [0.3, 0.08], [0.38, 0.05], [0.4, -0.01]], 0x6a5832);
+      p.dorsal([[0.78, -0.005], [0.8, 0.02], [0.86, 0.01], [0.87, -0.005]], 0x6a5832);
+      p.anal([[0.64, -0.01], [0.67, 0.04], [0.92, 0.03], [0.94, -0.01]], 0x6a5832);
+      roundTail(p, 0.03, 0.06, 0.12, 0x5a4a28);
+      p.barbel(0.02, 0.8, -0.03, 0.03, 0.08, 0.0026, 0x1c1810);
+      p.barbel(0.03, 0.4, -0.05, -0.05, 0.085, 0.0024, 0x1c1810);
+      p.barbel(0.05, 0.1, -0.02, -0.055, 0.04, 0.002, 0xcbbd8a);
+      p.barbel(0.08, 0.05, -0.01, -0.06, 0.05, 0.002, 0xcbbd8a);
+    },
+  },
+  atlantic_mackerel: {
+    length: 0.38, refWeight: 1.5, leaps: false, start: 0, end: 0.86,
+    stations: [[0, 0.008, 0.01, 0.008], [0.08, 0.042, 0.042, 0.034], [0.28, 0.068, 0.066, 0.056], [0.48, 0.072, 0.07, 0.06], [0.74, 0.04, 0.04, 0.034], [0.92, 0.015, 0.015, 0.012], [1, 0.01, 0.01, 0.01]],
+    paint(ctx) {
+      skin(ctx, '#1f5c63', '#8ab6b8', '#f1f3ee', 0.5);
+      waveBars(ctx, 0.12, 0.98, 0.026, 1, 0.55, 'rgba(10,26,40,0.78)', 2.4);
+      gillCover(ctx, 0.2, 'rgba(14,30,36,0.5)');
+      mouthLine(ctx, 0.08, 0.42);
+    },
+    parts(p) {
+      fishCommon(p, { eyeU: 0.12, eyeV: 0.64, eyeR: 0.018, fin: 0x4f7478 });
+      p.dorsal([[0.3, -0.01], [0.34, 0.07], [0.46, 0.012], [0.47, -0.01]], 0x2a5058);
+      p.dorsal([[0.58, -0.01], [0.62, 0.04], [0.66, -0.01]], 0x2a5058);
+      p.anal([[0.6, -0.01], [0.64, 0.035], [0.68, -0.01]], 0x7a9a96);
+      for (const u of [0.72, 0.76, 0.8, 0.84, 0.88]) {
+        p.dorsal([[u, -0.004], [u + 0.012, 0.016], [u + 0.02, -0.004]], 0x36666a);
+        p.anal([[u, -0.004], [u + 0.012, 0.016], [u + 0.02, -0.004]], 0x9ab4b0);
+      }
+      p.tail([[0.99, 0.01], [1.15, 0.1], [1.07, 0.02], [1.07, -0.02], [1.15, -0.1], [0.99, -0.01]], 0x2a5058);
+    },
+  },
+  brown_trout: {
+    length: 0.55, refWeight: 5, leaps: true, start: 0, end: 0.84, stations: TROUT_STATIONS,
+    paint(ctx) {
+      skin(ctx, '#5a4a26', '#b79a52', '#efe3b8', 0.42);
+      haloSpots(ctx, 55, () => 'rgba(28,20,14,0.92)', 'rgba(228,230,214,0.85)', 0.1, 1, 0.5, 1, 1.8, 3.2);
+      haloSpots(ctx, 26, () => 'rgba(190,40,34,0.95)', 'rgba(228,232,222,0.85)', 0.2, 1, 0.38, 0.72, 1.6, 2.6);
+      gillCover(ctx, 0.2, 'rgba(60,40,18,0.6)');
+      mouthLine(ctx, 0.1, 0.43);
+    },
+    parts: troutParts(0x9a8650, 0x6f6234),
+  },
+  barracuda: {
+    length: 1.05, refWeight: 12, leaps: true, start: 0, end: 0.86,
+    stations: [[0, 0.006, 0.008, 0.008], [0.1, 0.022, 0.022, 0.024], [0.25, 0.04, 0.038, 0.034], [0.6, 0.052, 0.05, 0.04], [0.85, 0.042, 0.038, 0.026], [1, 0.02, 0.02, 0.01]],
+    paint(ctx) {
+      skin(ctx, '#3c4a50', '#a8b4b6', '#f1f2ee', 0.5);
+      bars(ctx, [0.32, 0.4, 0.48, 0.56, 0.64, 0.72, 0.8, 0.88], 0.022, 'rgba(18,24,28,0.6)', 0.55, 0.9);
+      spots(ctx, 18, 'rgba(18,24,28,0.5)', 0.4, 0.95, 0.15, 0.5, 2, 4);
+      gillCover(ctx, 0.2, 'rgba(20,26,30,0.5)');
+      mouthLine(ctx, 0.14, 0.34, 'rgba(8,8,8,0.9)', 3);
+    },
+    parts(p) {
+      p.eye(0.1, 0.7, 0.011, 0xd8d0a0);
+      p.sideFins(0.3, 0.2, pectoral(0.05, 0.03), 1.1, 0x59666b);
+      p.sideFins(0.52, 0.1, pectoral(0.04, 0.026), 1.2, 0x59666b);
+      p.dorsal([[0.5, -0.01], [0.53, 0.035], [0.58, 0.03], [0.6, -0.01]], 0x3a464b);
+      p.dorsal([[0.8, -0.005], [0.83, 0.03], [0.88, 0.012], [0.9, -0.005]], 0x3a464b);
+      p.anal([[0.8, -0.005], [0.83, 0.03], [0.88, 0.012], [0.9, -0.005]], 0x59666b);
+      forkedTail(p, 1, 0.022, 0.07, 0.17, 0.7, 0x2f3a3f);
+      // Lower jaw juts past the upper, set with fangs.
+      p.spike(0.5 - 0.07, 0.5 + 0.014, 0.009, 0.0018, 0x7c898c, 1, -0.006);
+      p.teeth(0.01, 0.1, 0.32, 8, 0.012, 0.0032, 0xfbf8ec, false);
+      p.teeth(0.01, 0.09, 0.2, 7, 0.011, 0.003, 0xfbf8ec, true);
+    },
+  },
+  red_snapper: {
+    length: 0.6, refWeight: 10, leaps: false, start: 0, end: 0.84,
+    stations: [[0, 0.012, 0.014, 0.01], [0.05, 0.065, 0.05, 0.03], [0.18, 0.125, 0.1, 0.05], [0.45, 0.15, 0.13, 0.06], [0.75, 0.09, 0.075, 0.04], [1, 0.035, 0.035, 0.012]],
+    paint(ctx) {
+      skin(ctx, '#b43a3c', '#e07872', '#f4d6cc', 0.42);
+      scales(ctx, 'rgba(130,30,34,0.35)');
+      gillCover(ctx, 0.22, 'rgba(110,20,28,0.5)');
+      mouthLine(ctx, 0.1, 0.42, 'rgba(90,16,20,0.8)');
+    },
+    parts(p) {
+      fishCommon(p, { eyeU: 0.13, eyeV: 0.66, eyeR: 0.022, fin: 0xc8504c });
+      p.eye(0.13, 0.66, 0.014, 0xd01a1a);
+      // One continuous dorsal: spiny in front, soft and rounded behind.
+      p.dorsal([[0.24, -0.01], [0.27, 0.055], [0.4, 0.06], [0.5, 0.05], [0.54, 0.075], [0.62, 0.07], [0.72, 0.03], [0.76, -0.005]], 0xb83e40);
+      p.anal([[0.6, -0.01], [0.65, 0.07], [0.74, 0.05], [0.79, -0.005]], 0xd25f5a);
+      forkedTail(p, 1, 0.034, 0.09, 0.15, 0.82, 0xb83e40);
+    },
+  },
+  lake_trout: {
+    length: 0.75, refWeight: 20, leaps: false, start: 0, end: 0.84, stations: TROUT_STATIONS,
+    paint(ctx) {
+      skin(ctx, '#3c4a40', '#7b8a78', '#e6e8dc', 0.4);
+      spots(ctx, 150, 'rgba(214,220,196,0.78)', 0.08, 1, 0.38, 1, 2, 5);
+      spots(ctx, 40, 'rgba(214,220,196,0.5)', 0.1, 1, 0.1, 0.4, 1.5, 3);
+      gillCover(ctx, 0.2, 'rgba(24,32,26,0.5)');
+      mouthLine(ctx, 0.12, 0.42);
+    },
+    parts(p) {
+      fishCommon(p, { eyeU: 0.12, eyeV: 0.66, eyeR: 0.014, fin: 0x6b7766 });
+      p.dorsal([[0.4, -0.01], [0.44, 0.052], [0.58, 0.03], [0.6, -0.01]], 0x56634f);
+      p.dorsal([[0.8, -0.005], [0.83, 0.02], [0.87, -0.005]], 0x56634f);
+      p.anal([[0.7, -0.01], [0.73, 0.04], [0.85, 0.022], [0.86, -0.01]], 0x7a8573);
+      // Deeply forked tail.
+      forkedTail(p, 1, 0.03, 0.1, 0.24, 0.5, 0x56634f);
+    },
+  },
+  mahi_mahi: {
+    length: 1.15, refWeight: 25, leaps: true, start: 0, end: 0.84,
+    stations: [[0, 0.02, 0.03, 0.012], [0.04, 0.07, 0.06, 0.028], [0.12, 0.125, 0.09, 0.05], [0.3, 0.12, 0.09, 0.05], [0.55, 0.085, 0.065, 0.038], [0.8, 0.045, 0.04, 0.024], [1, 0.026, 0.026, 0.01]],
+    paint(ctx) {
+      skin(ctx, '#0c7a4a', '#c4b22e', '#f4ecb0', 0.46);
+      stripe(ctx, 0.62, 0.22, 'rgba(70,200,120,0.5)', 0.1, 1);
+      spots(ctx, 70, 'rgba(60,170,230,0.9)', 0.12, 1, 0.5, 0.98, 1.5, 3.2);
+      spots(ctx, 40, 'rgba(30,60,50,0.55)', 0.2, 1, 0.12, 0.45, 2, 4);
+      gillCover(ctx, 0.2, 'rgba(10,50,40,0.55)');
+      mouthLine(ctx, 0.07, 0.36);
+    },
+    parts(p) {
+      fishCommon(p, { eyeU: 0.09, eyeV: 0.6, eyeR: 0.016, fin: 0x4aa8a0 });
+      // The dorsal runs from above the eye almost to the tail.
+      p.dorsal([[0.08, -0.01], [0.1, 0.014], [0.16, 0.034], [0.5, 0.03], [0.8, 0.024], [0.88, -0.004]], 0x2c8fb0);
+      p.anal([[0.46, -0.01], [0.52, 0.026], [0.8, 0.02], [0.88, -0.005]], 0xe0c63a);
+      forkedTail(p, 1, 0.026, 0.11, 0.2, 0.62, 0x3fa46a);
+    },
+  },
+  yellowfin_tuna: {
+    length: 1.45, refWeight: 100, leaps: true, start: 0, end: 0.86,
+    stations: [[0, 0.01, 0.012, 0.01], [0.08, 0.052, 0.056, 0.046], [0.26, 0.105, 0.105, 0.09], [0.46, 0.112, 0.11, 0.095], [0.72, 0.054, 0.054, 0.046], [0.92, 0.014, 0.014, 0.012], [1, 0.009, 0.009, 0.016]],
+    paint(ctx) {
+      skin(ctx, '#0b1f3a', '#8a9fae', '#eef0ea', 0.5);
+      stripe(ctx, 0.56, 0.06, 'rgba(238,204,52,0.9)', 0.14, 0.94);
+      stripe(ctx, 0.5, 0.022, 'rgba(95,130,190,0.6)', 0.14, 0.94);
+      for (let u = 0.36; u < 0.9; u += 0.07) {
+        spots(ctx, 4, 'rgba(240,245,245,0.4)', u, u + 0.006, 0.08, 0.3, 1.5, 2.6);
+      }
+      gillCover(ctx, 0.24, 'rgba(12,22,36,0.55)');
+      mouthLine(ctx, 0.09, 0.42);
+    },
+    parts(p) {
+      fishCommon(p, { eyeU: 0.13, eyeV: 0.6, eyeR: 0.015, fin: 0x12284a });
+      p.dorsal([[0.34, -0.01], [0.38, 0.045], [0.5, 0.016], [0.52, -0.01]], 0xd8b930);
+      // Long sickle second dorsal and anal, swept back.
+      p.dorsal([[0.55, -0.01], [0.575, 0.09], [0.6, 0.055], [0.66, 0.028], [0.74, 0.006], [0.65, -0.01]], 0xf0d23a);
+      p.anal([[0.57, -0.01], [0.595, 0.085], [0.62, 0.05], [0.68, 0.026], [0.76, 0.006], [0.67, -0.01]], 0xf0d23a);
+      for (const u of [0.74, 0.78, 0.82, 0.86, 0.9]) {
+        p.dorsal([[u, -0.004], [u + 0.016, 0.018], [u + 0.022, -0.004]], 0xf0d23a);
+        p.anal([[u, -0.004], [u + 0.016, 0.018], [u + 0.022, -0.004]], 0xf0d23a);
+      }
+      p.tail([[0.99, 0.008], [1.16, 0.125], [1.1, 0.026], [1.1, -0.026], [1.16, -0.125], [0.99, -0.008]], 0x12284a);
+    },
+  },
+  sailfish: {
+    length: 2.4, refWeight: 100, leaps: true, start: 0.2, end: 0.88,
+    stations: [[0, 0.012, 0.014, 0.012], [0.1, 0.044, 0.046, 0.034], [0.28, 0.066, 0.07, 0.044], [0.52, 0.06, 0.062, 0.04], [0.82, 0.024, 0.022, 0.018], [1, 0.008, 0.008, 0.01]],
+    paint(ctx) {
+      skin(ctx, '#0e2a5c', '#3d6fa8', '#e8eef0', 0.5);
+      bars(ctx, [0.26, 0.32, 0.38, 0.44, 0.5, 0.56, 0.62, 0.68, 0.74, 0.8, 0.86, 0.92], 0.01, 'rgba(120,180,230,0.55)', 0.35, 0.85);
+      gillCover(ctx, 0.17, 'rgba(8,20,50,0.6)');
+      mouthLine(ctx, 0.08, 0.44);
+    },
+    parts(p) {
+      p.spike(0.5 - 0.22, 0.5, 0.013, 0.0018, 0x0c1c40, 1, 0.004);
+      p.eye(0.09, 0.62, 0.014, 0x7aa3c8);
+      p.sideFins(0.22, 0.2, pectoral(0.08, 0.035), 1.1, 0x1a3f7c);
+      p.sideFins(0.26, 0.05, [[0.01, 0], [-0.1, -0.02], [-0.11, -0.03], [-0.01, -0.012]], 0.8, 0x2a5a98);
+      // The enormous sail, running nearly the full back.
+      const sail = [[0.12, -0.01], [0.17, 0.09], [0.25, 0.15], [0.36, 0.165], [0.48, 0.145], [0.6, 0.1], [0.7, 0.05], [0.76, -0.005]];
+      p.dorsal(sail, 0x1b3f86);
+      finDots(p, [[0.22, 0.06], [0.27, 0.11], [0.3, 0.05], [0.34, 0.125], [0.38, 0.08], [0.42, 0.11], [0.45, 0.05], [0.5, 0.085], [0.54, 0.05], [0.58, 0.06], [0.31, 0.09], [0.4, 0.035]], 0.0075, 0x07122e);
+      p.dorsal([[0.86, -0.003], [0.9, 0.02], [0.92, -0.003]], 0x1b3f86);
+      p.anal([[0.56, -0.005], [0.62, 0.06], [0.7, 0.016], [0.74, -0.005]], 0x1b3f86);
+      p.anal([[0.84, -0.003], [0.88, 0.018], [0.9, -0.003]], 0x1b3f86);
+      p.tail([[0.99, 0.008], [1.18, 0.125], [1.11, 0.024], [1.11, -0.024], [1.18, -0.125], [0.99, -0.008]], 0x0f2a62);
+    },
+  },
+  tiger_shark: {
+    length: 3.4, refWeight: 600, leaps: false, surface: 'fin', start: 0, end: 0.78,
+    stations: [[0, 0.016, 0.016, 0.02], [0.05, 0.05, 0.035, 0.07], [0.2, 0.09, 0.076, 0.092], [0.42, 0.108, 0.094, 0.1], [0.72, 0.054, 0.048, 0.046], [1, 0.012, 0.011, 0.008]],
+    paint(ctx) {
+      sharkSkin(ctx, '#5c5d52', '#8b8c80', '#ece9dc', 0.38, false);
+      fadingBars(ctx, 0.24, 0.98, 0.036, 1, 0.38, 'rgba(24,26,26,0.7)');
+      ctx.fillStyle = 'rgba(24,26,26,0.4)';
+      ctx.fillRect(0, 0, TEX_W, py(0.9));
+    },
+    parts: sharkParts(0x5a5c52, 0xece9dc, { dorsal: 0.1, tailUp: 0.15, tailDown: 0.05, teeth: true }),
+  },
   bluegill: {
     length: 0.22, refWeight: 0.8, leaps: false, start: 0, end: 0.84,
     stations: [[0, 0.012, 0.014, 0.01], [0.06, 0.055, 0.055, 0.03], [0.2, 0.16, 0.155, 0.055], [0.46, 0.22, 0.205, 0.065], [0.72, 0.15, 0.135, 0.05], [0.92, 0.055, 0.05, 0.02], [1, 0.04, 0.035, 0.012]],

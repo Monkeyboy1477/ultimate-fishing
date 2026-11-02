@@ -23,11 +23,13 @@ const LAUNCH_ANGLE_MIN_DEG = 20; // full-power release: flatter, harder, faster 
 export class CastController {
   // rodStats: optional { maxDistance, powerExponent } from the equipped rod's shop tier.
   // Defaults match the original single-tier behavior exactly when omitted.
-  constructor(rodStats) {
+  // map: optional, keeps the cast inside that map's water however strong the rod is.
+  constructor(rodStats, map) {
     this.charging = false; // true while mouse is held down, aiming
     this.chargeTime = 0; // seconds elapsed since startCharging()
     this.currentPower = 0; // 0..1, read directly by the HUD every frame
-    this.maxDistance = rodStats?.maxDistance ?? MAX_CAST_DISTANCE_M;
+    this.maxDistance = Math.min(rodStats?.maxDistance ?? MAX_CAST_DISTANCE_M, map?.maxCastM ?? Infinity);
+    this.maxLateral = map?.maxLateralM ?? MAX_LATERAL_M;
     this.distancePowerExponent = rodStats?.powerExponent ?? DISTANCE_POWER_EXPONENT;
   }
 
@@ -60,8 +62,8 @@ export class CastController {
     const aimAngleRad = (aimAngleDeg * Math.PI) / 180;
     const rawLateral = landingDistance * Math.tan(aimAngleRad);
     const landingLateral = Math.max(
-      -MAX_LATERAL_M,
-      Math.min(MAX_LATERAL_M, rawLateral)
+      -this.maxLateral,
+      Math.min(this.maxLateral, rawLateral)
     );
 
     const landingPoint = { x: landingLateral, y: 0, z: -landingDistance };

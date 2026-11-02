@@ -2,6 +2,7 @@
 // Owns #menu-overlay only. Does NOT touch #hud-overlay (render.js owns that).
 
 import { FISH_SPECIES, RARITY_TIER_NAMES, canLureHook } from './fish.js';
+import { mapsForSpecies } from './maps.js';
 import { fishThumbnail } from './scene3d.js';
 import { isTouchDevice } from './touchControls.js';
 
@@ -9,6 +10,23 @@ let storedCallbacks = null;
 let storedEconomy = null;
 let startScreenEl = null;
 let resultPanelEl = null;
+
+const MENU_SCREENS = [['Shop', showShop], ['Fish Book', showBook], ['Maps', showMaps]];
+
+// Adds Shop / Fish Book / Maps buttons. onClose runs when any of those screens closes.
+function appendMenuButtons(container, menuOverlayElement, getEconomy, onClose, beforeOpen) {
+  MENU_SCREENS.forEach(([label, open]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'menu-button menu-button-secondary';
+    button.textContent = label;
+    button.addEventListener('click', () => {
+      if (beforeOpen) beforeOpen(button);
+      open(menuOverlayElement, getEconomy(), onClose);
+    });
+    container.appendChild(button);
+  });
+}
 
 function buildStartScreen(menuOverlayElement, callbacks) {
   const panel = document.createElement('div');
@@ -24,6 +42,10 @@ function buildStartScreen(menuOverlayElement, callbacks) {
     ? 'Hold CAST, use the arrows to aim, and let go to let it fly. Hold REEL to reel in anytime — but ease off when a fish fights back or the line will snap.'
     : 'Hold the mouse button to cast, move left/right to aim, release to let it fly. Hold Space to reel in anytime — but ease off when a fish fights back or the line will snap.';
 
+  const earn = document.createElement('p');
+  earn.className = 'menu-panel-text';
+  earn.textContent = 'Earn money from your catches to unlock new maps.';
+
   const buttonRow = document.createElement('div');
   buttonRow.className = 'menu-button-row';
 
@@ -36,36 +58,26 @@ function buildStartScreen(menuOverlayElement, callbacks) {
     callbacks.onStartCast();
   });
 
-  const shopButton = document.createElement('button');
-  shopButton.type = 'button';
-  shopButton.className = 'menu-button menu-button-secondary';
-  shopButton.textContent = 'Shop';
-  shopButton.addEventListener('click', () => {
-    showShop(menuOverlayElement, storedEconomy, () => {
-      menuOverlayElement.innerHTML = '';
-      menuOverlayElement.appendChild(startScreenEl);
-      menuOverlayElement.classList.add('active');
-    });
-  });
-
-  const bookButton = document.createElement('button');
-  bookButton.type = 'button';
-  bookButton.className = 'menu-button menu-button-secondary';
-  bookButton.textContent = 'Fish Book';
-  bookButton.addEventListener('click', () => {
-    showBook(menuOverlayElement, storedEconomy, () => {
-      menuOverlayElement.innerHTML = '';
-      menuOverlayElement.appendChild(startScreenEl);
-      menuOverlayElement.classList.add('active');
-    });
-  });
+  const location = document.createElement('p');
+  location.className = 'menu-panel-location';
+  const refreshLocation = () => {
+    const current = storedEconomy && storedEconomy.getCurrentMap();
+    location.textContent = current ? `Fishing at: ${current.name}` : '';
+  };
+  refreshLocation();
 
   buttonRow.appendChild(startButton);
-  buttonRow.appendChild(shopButton);
-  buttonRow.appendChild(bookButton);
+  appendMenuButtons(buttonRow, menuOverlayElement, () => storedEconomy, () => {
+    menuOverlayElement.innerHTML = '';
+    menuOverlayElement.appendChild(startScreenEl);
+    menuOverlayElement.classList.add('active');
+    refreshLocation();
+  });
 
   panel.appendChild(title);
+  panel.appendChild(location);
   panel.appendChild(instructions);
+  panel.appendChild(earn);
   panel.appendChild(buttonRow);
   return panel;
 }
@@ -223,6 +235,7 @@ export function showShop(menuOverlayElement, economy, onClose) {
 
 function lureHintText(species, economy) {
   const lures = economy.getGearTiers('lure').filter((lure) => canLureHook(lure, species));
+  if (!lures.length) return 'Bites on: no lure yet';
   const first = lures[0].name;
   const last = lures[lures.length - 1].name;
   return first === last ? `Bites on: ${first}` : `Bites on: ${first} to ${last}`;
@@ -257,6 +270,11 @@ function buildBookCard(species, economy, pendingPictures) {
   hint.textContent = lureHintText(species, economy);
   card.appendChild(hint);
 
+  const where = document.createElement('div');
+  where.className = 'gear-card-desc';
+  where.textContent = `Found in: ${mapsForSpecies(species.id).map((map) => map.name).join(', ') || 'unknown'}`;
+  card.appendChild(where);
+
   return card;
 }
 
@@ -285,6 +303,11 @@ function buildBookPanel(economy, onClose) {
 
   const pendingPictures = [];
   Object.keys(RARITY_TIER_NAMES).map(Number).forEach((rarityTier) => {
+    const speciesInTier = FISH_SPECIES
+      .filter((species) => species.rarityTier === rarityTier)
+      .sort((a, b) => a.maxWeight - b.maxWeight);
+    if (!speciesInTier.length) return;
+
     const section = document.createElement('section');
     section.className = 'gear-section';
 
@@ -295,10 +318,7 @@ function buildBookPanel(economy, onClose) {
 
     const row = document.createElement('div');
     row.className = 'gear-card-row';
-    FISH_SPECIES
-      .filter((species) => species.rarityTier === rarityTier)
-      .sort((a, b) => a.maxWeight - b.maxWeight)
-      .forEach((species) => row.appendChild(buildBookCard(species, economy, pendingPictures)));
+    speciesInTier.forEach((species) => row.appendChild(buildBookCard(species, economy, pendingPictures)));
     section.appendChild(row);
     panel.appendChild(section);
   });
@@ -320,6 +340,103 @@ export function showBook(menuOverlayElement, economy, onClose) {
   menuOverlayElement.classList.add('active');
 }
 
+// ---------------------------------------------------------------------------
+// Maps
+// ---------------------------------------------------------------------------
+
+function buildMapCard(map, economy, onChange) {
+  const card = document.createElement('div');
+  card.className = 'gear-card';
+
+  const name = document.createElement('div');
+  name.className = 'gear-card-name';
+  name.textContent = map.name;
+  card.appendChild(name);
+
+  const desc = document.createElement('div');
+  desc.className = 'gear-card-desc';
+  desc.textContent = map.description;
+  card.appendChild(desc);
+
+  const caught = map.speciesIds.filter((id) => economy.getCollectionEntry(id)).length;
+  const stat = document.createElement('div');
+  stat.className = 'gear-card-stat';
+  stat.textContent = `${caught} of ${map.speciesIds.length} fish caught`;
+  card.appendChild(stat);
+
+  const price = document.createElement('div');
+  price.className = 'gear-card-price';
+  price.textContent = map.price > 0 ? `$${map.price.toLocaleString('en-US')}` : 'Free';
+  card.appendChild(price);
+
+  const current = economy.getCurrentMap();
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'menu-button gear-card-button';
+
+  if (current && current.id === map.id) {
+    button.textContent = 'Here now';
+    button.disabled = true;
+    card.classList.add('gear-card-equipped');
+  } else if (economy.isMapOwned(map.id)) {
+    button.textContent = 'Travel';
+    button.addEventListener('click', () => {
+      economy.travelTo(map.id);
+      onChange();
+    });
+  } else {
+    const affordable = economy.canAfford(map.price);
+    button.textContent = affordable ? 'Buy' : 'Need more $';
+    button.disabled = !affordable;
+    button.addEventListener('click', () => {
+      economy.buyMap(map.id);
+      onChange();
+    });
+  }
+
+  card.appendChild(button);
+  return card;
+}
+
+function buildMapsPanel(economy, onClose) {
+  const panel = document.createElement('div');
+  panel.className = 'menu-panel menu-panel-shop';
+
+  const title = document.createElement('h2');
+  title.className = 'menu-panel-title';
+  title.textContent = 'Maps';
+  panel.appendChild(title);
+
+  const currency = document.createElement('p');
+  currency.className = 'menu-panel-note';
+  currency.textContent = `You have $${Math.floor(economy.getCurrency()).toLocaleString('en-US')}`;
+  panel.appendChild(currency);
+
+  const rerender = () => {
+    panel.replaceWith(buildMapsPanel(economy, onClose));
+  };
+
+  const row = document.createElement('div');
+  row.className = 'gear-card-row';
+  economy.getMaps().forEach((map) => row.appendChild(buildMapCard(map, economy, rerender)));
+  panel.appendChild(row);
+
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'menu-button';
+  closeButton.textContent = 'Close';
+  closeButton.addEventListener('click', onClose);
+  panel.appendChild(closeButton);
+
+  return panel;
+}
+
+export function showMaps(menuOverlayElement, economy, onClose) {
+  menuOverlayElement.innerHTML = '';
+  menuOverlayElement.appendChild(buildMapsPanel(economy, onClose));
+  menuOverlayElement.classList.add('active');
+}
+
 // Shown while idle, since a free retrieve ends with no overlay to reach these from.
 export function createIdleMenuButtons(stageElement, menuOverlayElement, economy) {
   const closeToGame = () => {
@@ -331,17 +448,7 @@ export function createIdleMenuButtons(stageElement, menuOverlayElement, economy)
   group.className = 'idle-menu-buttons';
   group.hidden = true;
 
-  [['Fish Book', showBook], ['Shop', showShop]].forEach(([label, open]) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'menu-button menu-button-secondary';
-    button.textContent = label;
-    button.addEventListener('click', () => {
-      button.blur();
-      open(menuOverlayElement, economy, closeToGame);
-    });
-    group.appendChild(button);
-  });
+  appendMenuButtons(group, menuOverlayElement, () => economy, closeToGame, (button) => button.blur());
 
   stageElement.appendChild(group);
   return group;
@@ -363,7 +470,7 @@ function describeResult(result) {
     };
   }
 
-  const lostDetail = result.species ? `It was a ${result.species.name}.` : '';
+  const lostDetail = result.species ? `It was ${/^[AEIOU]/i.test(result.species.name) ? 'an' : 'a'} ${result.species.name}.` : '';
   if (result.reason === 'line_snapped') {
     const note = result.lineTooWeak ? 'This fish is too strong for your line. Buy a stronger one in the Shop.' : null;
     return { heading: 'The line snapped!', detail: lostDetail, note, variant: 'fail' };
@@ -425,31 +532,11 @@ export function showCatchResult(menuOverlayElement, result) {
   });
   buttonRow.appendChild(restartButton);
 
-  const shopButton = document.createElement('button');
-  shopButton.type = 'button';
-  shopButton.className = 'menu-button menu-button-secondary';
-  shopButton.textContent = 'Shop';
-  shopButton.addEventListener('click', () => {
-    showShop(menuOverlayElement, storedEconomy, () => {
-      menuOverlayElement.innerHTML = '';
-      menuOverlayElement.appendChild(panel);
-      menuOverlayElement.classList.add('active');
-    });
+  appendMenuButtons(buttonRow, menuOverlayElement, () => storedEconomy, () => {
+    menuOverlayElement.innerHTML = '';
+    menuOverlayElement.appendChild(panel);
+    menuOverlayElement.classList.add('active');
   });
-  buttonRow.appendChild(shopButton);
-
-  const bookButton = document.createElement('button');
-  bookButton.type = 'button';
-  bookButton.className = 'menu-button menu-button-secondary';
-  bookButton.textContent = 'Fish Book';
-  bookButton.addEventListener('click', () => {
-    showBook(menuOverlayElement, storedEconomy, () => {
-      menuOverlayElement.innerHTML = '';
-      menuOverlayElement.appendChild(panel);
-      menuOverlayElement.classList.add('active');
-    });
-  });
-  buttonRow.appendChild(bookButton);
 
   panel.appendChild(buttonRow);
 

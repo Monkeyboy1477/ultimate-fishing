@@ -5,7 +5,7 @@
 
 import { CastController, isLureHome, retrieveSpeedFor, stepRetrieve } from './casting3d.js';
 import { LineTensionSystem, fightTiming, stepFight } from './tension.js';
-import { FISH_SPECIES, trySpawnBite, HookedFish, getSellPrice, runTensionFor } from './fish.js';
+import { FISH_SPECIES, trySpawnBite, HookedFish, eligibleSpeciesFor, getSellPrice, runTensionFor } from './fish.js';
 import { HOME_POINT } from './constants.js';
 import { initScene, renderScene3D, resizeScene, spawnSplash3D } from './scene3d.js';
 import { renderHUD } from './render.js';
@@ -55,7 +55,7 @@ const game = {
 
 // Rebuilt on every new cast so a rod bought/equipped mid-session (between casts, from the
 // menu or result screen's shop) takes effect immediately rather than needing a page reload.
-let castController = new CastController(economy.getEquippedStats('rod'));
+let castController = new CastController(economy.getEquippedStats('rod'), economy.getCurrentMap());
 
 initScene(canvas);
 
@@ -85,7 +85,7 @@ function canStartCast() {
 
 function startCast() {
   game.state = STATE.CHARGING;
-  castController = new CastController(economy.getEquippedStats('rod'));
+  castController = new CastController(economy.getEquippedStats('rod'), economy.getCurrentMap());
   castController.startCharging();
 }
 
@@ -261,7 +261,13 @@ function update(dt) {
         }
       }
       const lureDistance = -game.lurePos.z;
-      const bite = trySpawnBite({ landingDistance: lureDistance }, game.waitElapsed, dt, economy.getEquippedStats('lure'));
+      const bite = trySpawnBite(
+        { landingDistance: lureDistance },
+        game.waitElapsed,
+        dt,
+        economy.getEquippedStats('lure'),
+        economy.getCurrentMap().id,
+      );
       if (bite) {
         const timing = fightTiming(bite, lureDistance, game.sinceRelease);
         game.hookedFish = new HookedFish(bite, timing.budgetS, economy.getEquippedStats('lure').minFishLb);
@@ -310,6 +316,7 @@ function render() {
     time: elapsedTime,
     lurePos: game.lurePos,
     reeling: game.reelInput === 1 && (game.state === STATE.WAITING_BITE || game.state === STATE.FIGHTING),
+    mapId: economy.getCurrentMap().id,
     fightOrigin: game.fightOrigin,
     lastResult: game.lastResult,
     gear: {
@@ -325,6 +332,8 @@ function render() {
     tensionState: game.tensionState,
     hookedFish: game.hookedFish,
     touch: document.body.classList.contains('touch'),
+    noFishForLure: eligibleSpeciesFor(economy.getEquippedStats('lure'), economy.getCurrentMap().id).length === 0
+      && !menuOverlay.classList.contains('active'),
   });
 
   const menuOpen = menuOverlay.classList.contains('active');

@@ -5,6 +5,7 @@
 // (lure) — this file only owns the data and the save-game state, not the physics/bite logic.
 
 import { FISH_SPECIES } from './fish.js';
+import { MAPS, STARTING_MAP_ID, getMap } from './maps.js';
 
 const SAVE_KEY = 'reel-realism-save-v1';
 
@@ -111,6 +112,8 @@ function defaultState() {
     },
     stats: { catchCount: 0, bestWeight: 0, bestSpecies: null, totalEarnings: 0 },
     collection: {}, // speciesId -> { count, bestWeight }, shown in the Fish Book
+    ownedMaps: [STARTING_MAP_ID],
+    currentMap: STARTING_MAP_ID,
   };
 }
 
@@ -138,6 +141,8 @@ function loadState() {
       },
       stats: { ...base.stats, ...parsed.stats },
       collection: parsed.collection ?? seedCollection({ ...base.stats, ...parsed.stats }),
+      ownedMaps: Array.isArray(parsed.ownedMaps) ? parsed.ownedMaps : base.ownedMaps,
+      currentMap: getMap(parsed.currentMap) ? parsed.currentMap : base.currentMap,
     };
   } catch {
     return defaultState();
@@ -166,6 +171,38 @@ export function createEconomy() {
 
     getCollectionEntry(speciesId) {
       return state.collection[speciesId] ?? null;
+    },
+
+    getMaps() {
+      return MAPS;
+    },
+
+    getCurrentMap() {
+      return getMap(state.currentMap);
+    },
+
+    isMapOwned(mapId) {
+      return state.ownedMaps.includes(mapId);
+    },
+
+    // Buys the map and travels there. Returns { ok: true } or { ok: false, reason }.
+    buyMap(mapId) {
+      const map = getMap(mapId);
+      if (!map) return { ok: false, reason: 'unknown_map' };
+      if (state.ownedMaps.includes(mapId)) return { ok: false, reason: 'already_owned' };
+      if (state.currency < map.price) return { ok: false, reason: 'cannot_afford' };
+      state.currency -= map.price;
+      state.ownedMaps.push(mapId);
+      state.currentMap = mapId;
+      persist();
+      return { ok: true };
+    },
+
+    travelTo(mapId) {
+      if (!state.ownedMaps.includes(mapId)) return false;
+      state.currentMap = mapId;
+      persist();
+      return true;
     },
 
     getGearTiers(category) {

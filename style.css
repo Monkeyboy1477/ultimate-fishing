@@ -396,6 +396,23 @@ body {
 .idle-menu-buttons .menu-button { background: rgba(15, 32, 39, 0.75); }
 .idle-menu-buttons[hidden] { display: none; }
 
+@media (max-width: 600px) {
+  .idle-menu-buttons { top: 62px; }
+}
+
+.menu-panel-location {
+  margin: -6px 0 10px;
+  color: #8fd3e8;
+  font-size: 0.75rem;
+  opacity: 0.85;
+}
+
+.touch .menu-panel-location { margin: -4px 0 6px; }
+.touch .menu-button-row { gap: 6px; }
+.touch .menu-button-row .menu-button { padding: 8px 12px; font-size: 0.9rem; }
+.touch .idle-menu-buttons { gap: 6px; }
+.touch .idle-menu-buttons .menu-button { padding: 6px 10px; font-size: 0.85rem; min-height: 40px; }
+
 /* --- ui.js: Fish Book --- */
 .book-card {
   background: rgba(255, 255, 255, 0.04);
@@ -527,4 +544,39 @@ body {
   .touch #touch-controls.visible { align-items: flex-end; padding-bottom: max(40px, env(safe-area-inset-bottom)); }
   .touch .touch-aim { width: 76px; height: 76px; }
   .touch .touch-action { width: 124px; height: 124px; }
+}
+
+/* --- render.js: notice when no fish on this map will take the equipped lure --- */
+.hud-lure-hint {
+  left: 50%;
+  top: 64px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(360px, 90%);
+  box-sizing: border-box;
+  text-align: center;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #fff;
+  background: rgba(150, 90, 10, 0.92);
+  border-color: var(--color-ui-accent);
+  pointer-events: none;
+  z-index: 4;
+}
+
+@media (max-width: 600px) {
+  .hud-lure-hint { top: 116px; max-width: 86%; }
+}
+
+.touch .hud-lure-hint { top: 62px; font-size: 0.75rem; padding: 5px 10px; max-width: min(300px, 90%); }
+
+@media (orientation: portrait) {
+  .touch .hud-lure-hint { top: 116px; max-width: 86%; }
+}
+
+@media (orientation: portrait) {
+  .touch .menu-button-row .menu-button { padding: 8px 8px; font-size: 0.85rem; }
+  .touch .menu-button-row { gap: 5px; }
 }

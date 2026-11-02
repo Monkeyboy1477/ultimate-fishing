@@ -1,5 +1,5 @@
 // world3d.js
-// Procedural golden-hour lake: sky, water, terrain, trees, reeds, dock and gear props.
+// Procedural fishing worlds, one per map (pond, river, lake, ocean): sky, water, terrain, scenery, dock and gear props.
 // World convention: meters; +X right, +Y up, -Z out over the water. Water surface at y = 0.
 
 import * as THREE from 'three';
@@ -124,48 +124,119 @@ function addWind(material, amplitude, frequency) {
   return material;
 }
 
-// ---- Sky, sun, fog and environment light -------------------------------------
+// ---- Per-map look: sky, sun, fog, light and water --------------------------------
+// Fog is blended after tone mapping, so fog colors here are the on-screen sRGB values.
+const MAP_STYLE = {
+  pond: {
+    sunElevation: 25, sunAzimuth: 36, turbidity: 2.2, rayleigh: 3.4, mie: 0.003, mieG: 0.8,
+    exposure: 0.6, skyTint: [0.55, 0.8, 1.3], fog: [0.78, 0.82, 0.74], fogDensity: 0.0036,
+    sunHex: 0xffd49c, sunIntensity: 3.3, hemiSky: 0xd2e2f2, hemiGround: 0x5c5434, hemiIntensity: 1.15,
+    water: { color: 0x1f7058, sun: 0xffe2b4, distortion: 1.5, size: 1.5, flow: [0, 0], drift: 1, swell: 0 },
+  },
+  river: {
+    sunElevation: 31, sunAzimuth: -30, turbidity: 1.8, rayleigh: 4, mie: 0.003, mieG: 0.8,
+    exposure: 0.6, skyTint: [0.7, 0.85, 1.15], fog: [0.62, 0.74, 0.8], fogDensity: 0.0034,
+    sunHex: 0xe6eeff, sunIntensity: 3, hemiSky: 0xb2cfe8, hemiGround: 0x3a4638, hemiIntensity: 1.2,
+    water: { color: 0x1b5058, sun: 0xeaf2ff, distortion: 1.7, size: 2, flow: [0, 7], drift: 0.2, swell: 0 },
+  },
+  lake: {
+    sunElevation: SUN_ELEVATION_DEG, sunAzimuth: SUN_AZIMUTH_DEG, turbidity: 6, rayleigh: 2.2, mie: 0.006, mieG: 0.82,
+    exposure: TONE_EXPOSURE, fog: [0.87, 0.71, 0.56], fogDensity: FOG_DENSITY,
+    sunHex: 0xffc98a, sunIntensity: 3.4, hemiSky: 0xbcd3ea, hemiGround: 0x4a3d2a, hemiIntensity: 1.1,
+    water: { color: 0x0b3a48, sun: 0xffe2b0, distortion: 2.4, size: 1, flow: [0, 0], drift: 1, swell: 0 },
+  },
+  ocean: {
+    sunElevation: 42, sunAzimuth: 14, turbidity: 1.4, rayleigh: 3.6, mie: 0.002, mieG: 0.8,
+    exposure: 0.66, skyTint: [0.32, 0.62, 1.4], fog: [0.62, 0.77, 0.92], fogDensity: 0.0015,
+    sunHex: 0xfff3e0, sunIntensity: 3.6, hemiSky: 0xc4deff, hemiGround: 0x2f4a66, hemiIntensity: 1.2,
+    water: { color: 0x0a66b0, sun: 0xfff6e2, distortion: 3.2, size: 0.55, flow: [0, 0], drift: 1, swell: 1 },
+  },
+};
+
+let sceneRef = null;
+let rendererRef = null;
+let sky = null;
+let sunLight = null;
+let hemiLight = null;
+let currentMapId = null;
+const envTextures = {};
+const mapEntries = {};
+const docks = {};
+const nearObjects = []; // everything close to the water that must not show in its reflection
+
 function buildAtmosphere(scene, renderer) {
-  const elevation = THREE.MathUtils.degToRad(SUN_ELEVATION_DEG);
-  const azimuth = THREE.MathUtils.degToRad(SUN_AZIMUTH_DEG);
-  const sunDirection = new THREE.Vector3(
+  sky = new Sky();
+  sky.scale.setScalar(4000);
+  // Optional blue-up tint so daytime skies stay blue instead of washing out to white.
+  sky.material.uniforms.uTint = { value: new THREE.Vector3(1, 1, 1) };
+  sky.material.fragmentShader = `uniform vec3 uTint;
+${sky.material.fragmentShader}`.replace(
+    'gl_FragColor = vec4( retColor, 1.0 );',
+    'retColor *= mix( vec3( 1.0 ), uTint, smoothstep( -0.15, 0.25, direction.y ) ); gl_FragColor = vec4( retColor, 1.0 );'
+  );
+  scene.add(sky);
+
+  scene.fog = new THREE.FogExp2(new THREE.Color().setRGB(0.87, 0.71, 0.56), FOG_DENSITY);
+  sunLight = new THREE.DirectionalLight(0xffc98a, 3.4);
+  scene.add(sunLight);
+  hemiLight = new THREE.HemisphereLight(0xbcd3ea, 0x4a3d2a, 1.1);
+  scene.add(hemiLight);
+}
+
+function sunVector(style) {
+  const elevation = THREE.MathUtils.degToRad(style.sunElevation);
+  const azimuth = THREE.MathUtils.degToRad(style.sunAzimuth);
+  return new THREE.Vector3(
     Math.sin(azimuth) * Math.cos(elevation),
     Math.sin(elevation),
     -Math.cos(azimuth) * Math.cos(elevation)
   ).normalize();
-
-  const sky = new Sky();
-  sky.scale.setScalar(4000);
-  const u = sky.material.uniforms;
-  u.turbidity.value = 6;
-  u.rayleigh.value = 2.2;
-  u.mieCoefficient.value = 0.006;
-  u.mieDirectionalG.value = 0.82;
-  u.sunPosition.value.copy(sunDirection);
-
-  renderer.toneMappingExposure = TONE_EXPOSURE;
-
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const skyOnly = new THREE.Scene();
-  skyOnly.add(sky);
-  scene.environment = pmrem.fromScene(skyOnly, 0.03, 0.1, 5000).texture;
-  pmrem.dispose();
-  scene.add(sky);
-
-  // Three blends fog after tone mapping and sRGB encoding, so these are stored raw:
-  // going through a hex/sRGB conversion would make the haze render far too dark.
-  const fogColor = new THREE.Color().setRGB(0.87, 0.71, 0.56);
-  scene.fog = new THREE.FogExp2(fogColor, FOG_DENSITY);
-
-  const sunLight = new THREE.DirectionalLight(0xffc98a, 3.4);
-  sunLight.position.copy(sunDirection).multiplyScalar(300);
-  scene.add(sunLight);
-  scene.add(new THREE.HemisphereLight(0xbcd3ea, 0x4a3d2a, 1.1));
-
-  return sunDirection;
 }
 
-function buildWater(scene, sunDirection) {
+function applyStyle(id) {
+  const style = MAP_STYLE[id];
+  const sunDirection = sunVector(style);
+  const u = sky.material.uniforms;
+  u.turbidity.value = style.turbidity;
+  u.rayleigh.value = style.rayleigh;
+  u.mieCoefficient.value = style.mie;
+  u.mieDirectionalG.value = style.mieG;
+  u.sunPosition.value.copy(sunDirection);
+  u.uTint.value.fromArray(style.skyTint || [1, 1, 1]);
+
+  // One environment map per sky, made the first time the map is visited and then reused.
+  if (!envTextures[id]) {
+    const pmrem = new THREE.PMREMGenerator(rendererRef);
+    const skyOnly = new THREE.Scene();
+    skyOnly.add(sky);
+    envTextures[id] = pmrem.fromScene(skyOnly, 0.03, 0.1, 5000).texture;
+    pmrem.dispose();
+    sceneRef.add(sky);
+  }
+  sceneRef.environment = envTextures[id];
+  rendererRef.toneMappingExposure = style.exposure;
+
+  sceneRef.fog.color.setRGB(style.fog[0], style.fog[1], style.fog[2]);
+  sceneRef.fog.density = style.fogDensity;
+  sunLight.color.setHex(style.sunHex);
+  sunLight.intensity = style.sunIntensity;
+  sunLight.position.copy(sunDirection).multiplyScalar(300);
+  hemiLight.color.setHex(style.hemiSky);
+  hemiLight.groundColor.setHex(style.hemiGround);
+  hemiLight.intensity = style.hemiIntensity;
+
+  const wu = water.material.uniforms;
+  wu.sunDirection.value.copy(sunDirection);
+  wu.sunColor.value.setHex(style.water.sun);
+  wu.waterColor.value.setHex(style.water.color);
+  wu.distortionScale.value = style.water.distortion;
+  wu.size.value = style.water.size;
+  wu.uFlow.value.set(style.water.flow[0], style.water.flow[1]);
+  wu.uDrift.value = style.water.drift;
+  wu.uSwell.value = style.water.swell;
+}
+
+function buildWater(scene) {
   water = new Water(new THREE.PlaneGeometry(2400, 2400), {
     textureWidth: 512,
     textureHeight: 512,
@@ -176,7 +247,7 @@ function buildWater(scene, sunDirection) {
         texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
       }
     ),
-    sunDirection: sunDirection.clone(),
+    sunDirection: new THREE.Vector3(0, 1, 0),
     sunColor: 0xffe2b0,
     waterColor: 0x0b3a48,
     distortionScale: 2.4,
@@ -184,36 +255,65 @@ function buildWater(scene, sunDirection) {
   });
   water.rotation.x = -Math.PI / 2;
   water.position.set(0, 0, -130);
+
+  // Extra shader inputs: a steady current (river), slower base drift, and big swells (ocean).
+  // With flow = 0, drift = 1 and swell = 0 the shader matches stock Water exactly.
+  const mat = water.material;
+  mat.uniforms.uFlow = { value: new THREE.Vector2() };
+  mat.uniforms.uDrift = { value: 1 };
+  mat.uniforms.uSwell = { value: 0 };
+  const noiseStart = mat.fragmentShader.indexOf('vec4 getNoise( vec2 uv ) {');
+  const noiseEnd = mat.fragmentShader.indexOf('return noise * 0.5 - 1.0;');
+  const noiseBody = mat.fragmentShader
+    .slice(noiseStart, noiseEnd)
+    .replace(/time/g, 'tt')
+    .replace('vec4 getNoise( vec2 uv ) {', 'vec4 getNoise( vec2 uv ) {\n float tt = time * uDrift; uv += uFlow * time;');
+  mat.fragmentShader = `uniform vec2 uFlow;
+uniform float uDrift;
+uniform float uSwell;
+vec3 swellTerms( vec2 p, float t ) {
+  vec2 slope = vec2( 0.0 );
+  float h = 0.0;
+  float a = dot( p, vec2( 0.31, 0.95 ) ) * 0.11 - t * 0.9;
+  slope += vec2( 0.31, 0.95 ) * cos( a ) * 0.2; h += sin( a ) * 0.5;
+  float b = dot( p, vec2( -0.8, 0.6 ) ) * 0.19 - t * 1.25;
+  slope += vec2( -0.8, 0.6 ) * cos( b ) * 0.16; h += sin( b ) * 0.3;
+  float c = dot( p, vec2( 0.95, 0.3 ) ) * 0.31 - t * 1.7;
+  slope += vec2( 0.95, 0.3 ) * cos( c ) * 0.1; h += sin( c ) * 0.2;
+  return vec3( slope, h );
+}
+${mat.fragmentShader.slice(0, noiseStart)}${noiseBody}${mat.fragmentShader.slice(noiseEnd)}`
+    .replace(
+      'vec3 surfaceNormal = normalize( noise.xzy * vec3( 1.5, 1.0, 1.5 ) );',
+      `vec3 swell = uSwell > 0.0 ? swellTerms( worldPosition.xz, time ) * uSwell : vec3( 0.0 );
+					vec3 surfaceNormal = normalize( noise.xzy * vec3( 1.5, 1.0, 1.5 ) + vec3( swell.x, 0.0, swell.y ) );`
+    )
+    .replace(
+      'vec3 outgoingLight = albedo;',
+      'albedo *= 1.0 + swell.z * 0.28;\n\t\t\t\t\tvec3 outgoingLight = albedo;'
+    );
   scene.add(water);
 }
 
 // ---- Terrain -------------------------------------------------------------------
-function buildTerrain(scene) {
+// def: { height(x, z), color(color, h, tint, x, z) }
+function buildTerrain(group, def) {
   const SEGMENTS = 220;
   const EXTENT = 950;
   const CENTER_Z = -60;
-  const WARP = 2.2; // packs vertices near the lake, sparse out at the fogged horizon
+  const WARP = 2.2; // packs vertices near the water, sparse out at the fogged horizon
   const geometry = new THREE.PlaneGeometry(2, 2, SEGMENTS, SEGMENTS);
   const pos = geometry.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-
-  const sand = new THREE.Color(0x9c8460);
-  const grass = new THREE.Color(0x5d6b32);
-  const forest = new THREE.Color(0x2c3f25);
-  const rock = new THREE.Color(0x6d6358);
   const color = new THREE.Color();
   const warp = (v) => Math.sign(v) * EXTENT * Math.pow(Math.abs(v), WARP);
 
   for (let i = 0; i < pos.count; i += 1) {
     const x = warp(pos.getX(i));
     const z = CENTER_Z - warp(pos.getY(i));
-    const h = terrainHeight(x, z);
+    const h = def.height(x, z);
     pos.setXYZ(i, x, h, z);
-
-    const tint = fbm(x * 0.05, z * 0.05, 2);
-    color.copy(sand).lerp(grass, smooth(0.25, 0.8, h + (tint - 0.5) * 0.5));
-    color.lerp(forest, smooth(2, 14, h + tint * 8));
-    color.lerp(rock, smooth(48, 85, h + tint * 22));
+    def.color(color, h, fbm(x * 0.05, z * 0.05, 2), x, z);
     color.toArray(colors, i * 3);
   }
 
@@ -221,12 +321,120 @@ function buildTerrain(scene) {
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
-
-  const terrain = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true }));
-  scene.add(terrain);
+  group.add(new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true })));
 }
 
-// ---- Trees and reeds -------------------------------------------------------------
+const LAKE_SAND = new THREE.Color(0x9c8460);
+const LAKE_GRASS = new THREE.Color(0x5d6b32);
+const LAKE_FOREST = new THREE.Color(0x2c3f25);
+const LAKE_ROCK = new THREE.Color(0x6d6358);
+const LAKE_DEF = {
+  height: terrainHeight,
+  color(color, h, tint) {
+    color.copy(LAKE_SAND).lerp(LAKE_GRASS, smooth(0.25, 0.8, h + (tint - 0.5) * 0.5));
+    color.lerp(LAKE_FOREST, smooth(2, 14, h + tint * 8));
+    color.lerp(LAKE_ROCK, smooth(48, 85, h + tint * 22));
+  },
+};
+
+// ---- Mill Pond shape -------------------------------------------------------------
+// A little pond, about 70 m from the dock to the far bank. The near banks follow the same
+// 0.88 slope as the lake (outside the 40-degree aim cone), then a cove opens either side of the
+// dock and the pond widens to 90+ m across. Water always spans the full +-30 m x 55 m cast area.
+const POND_FAR_D = 70;
+
+function pondHalfWidth(d, side) {
+  if (d <= -SHORE_BEHIND_Z || d >= POND_FAR_D) return 0;
+  const cone = 0.88 * (d + SHORE_BEHIND_Z);
+  const cove = 8 * smooth(2, 14, d) * (1 - smooth(26, 42, d));
+  const k = (d - 34) / 36;
+  const body = 47 * Math.sqrt(Math.max(0, 1 - k * k)) - 1.5 + valueNoise(d * 0.06, side * 5.1) * 3.5;
+  return Math.min(body, cone + cove);
+}
+
+function pondShore(x, z) {
+  const d = -z;
+  const side = x >= 0 ? 1 : -1;
+  return Math.max(Math.abs(x) - pondHalfWidth(d, side), z - SHORE_BEHIND_Z, d - POND_FAR_D);
+}
+
+function pondHeight(x, z) {
+  const s = pondShore(x, z);
+  if (s <= 0) return Math.max(-3, s * 0.2);
+  const shelf = 0.2 * Math.min(s, 5);
+  const bumps = (fbm(x * 0.12, z * 0.12, 2) - 0.5) * 0.7 * smooth(1, 6, s);
+  const rolling = fbm(x * 0.03, z * 0.03, 3) * 5 * smooth(6, 60, s);
+  const hills = fbm(x * 0.008 + 9, z * 0.008 + 4, 4) * 52 * smooth(25, 350, s);
+  return shelf + bumps + rolling + hills;
+}
+
+const POND_MUD = new THREE.Color(0x7a6a44);
+const POND_GRASS = new THREE.Color(0x7aa83c);
+const POND_MEADOW = new THREE.Color(0x98b84a);
+const POND_HILL = new THREE.Color(0x4f7a30);
+const POND_DEEP = new THREE.Color(0x35602a);
+const POND_DEF = {
+  height: pondHeight,
+  color(color, h, tint, x, z) {
+    const s = pondShore(x, z);
+    color.copy(POND_MUD).lerp(POND_GRASS, smooth(0.1, 1.6, s));
+    color.lerp(POND_MEADOW, smooth(0.4, 0.75, tint) * 0.7);
+    color.lerp(POND_HILL, smooth(4, 24, h + tint * 6));
+    color.lerp(POND_DEEP, smooth(18, 50, h + tint * 10));
+  },
+};
+
+// ---- Rocky River shape -----------------------------------------------------------
+// The river runs away from the dock, with the bank cone at the dock and a gentle meander. At
+// least 30 m of water each side of the centerline keeps the +-24 m cast width wet along the
+// 100 m cast range (the centerline never strays more than 4 m from the dock axis out there).
+function riverCenter(d) {
+  const dd = Math.max(d, 0);
+  return 4 * Math.sin(dd * 0.03) * smooth(15, 60, dd) + 55 * Math.sin((dd - 90) * 0.0075) * smooth(100, 280, dd);
+}
+
+function riverEdges(d, side) {
+  if (d <= -SHORE_BEHIND_Z) return null;
+  const cone = 0.88 * (d + SHORE_BEHIND_Z);
+  const c = riverCenter(d);
+  const w = 30.5 + valueNoise(d * 0.04, side * 3.1 + 2) * 2.4 - 1.2;
+  return { left: Math.max(c - w, -cone), right: Math.min(c + w, cone) };
+}
+
+function riverShore(x, z) {
+  const d = -z;
+  const e = riverEdges(d, x >= 0 ? 1 : -1);
+  if (!e) return Math.max(z - SHORE_BEHIND_Z, 0.5);
+  const across = x > e.right ? x - e.right : e.left - x;
+  const inside = -Math.min(x - e.left, e.right - x);
+  return Math.max(across > 0 ? across : inside, z - SHORE_BEHIND_Z);
+}
+
+function riverHeight(x, z) {
+  const s = riverShore(x, z);
+  if (s <= 0) return Math.max(-4, s * 0.16);
+  const shelf = 0.32 * Math.min(s, 8);
+  const bumps = (fbm(x * 0.08, z * 0.08, 2) - 0.5) * 1.2 * smooth(1, 8, s);
+  const foot = fbm(x * 0.03, z * 0.03, 3) * 10 * smooth(6, 60, s);
+  const ridge = Math.pow(fbm(x * 0.007 + 3, z * 0.007 + 8, 5), 1.3) * 140 * smooth(12, 260, s);
+  return shelf + bumps + foot + ridge;
+}
+
+const RIVER_GRAVEL = new THREE.Color(0x8a8578);
+const RIVER_MOSS = new THREE.Color(0x4a5a34);
+const RIVER_FOREST = new THREE.Color(0x26382a);
+const RIVER_ROCK = new THREE.Color(0x6c6c6a);
+const RIVER_DEF = {
+  height: riverHeight,
+  color(color, h, tint, x, z) {
+    const s = riverShore(x, z);
+    color.copy(RIVER_GRAVEL).lerp(RIVER_MOSS, smooth(1.5, 5 + tint * 4, s));
+    color.lerp(RIVER_FOREST, smooth(3, 16, h + tint * 8));
+    color.lerp(RIVER_ROCK, smooth(55, 95, h + tint * 22));
+  },
+};
+
+// ---- Instancing helpers ------------------------------------------------------------
 function coloredGeometry(geometry, hex) {
   const g = geometry.index ? geometry.toNonIndexed() : geometry.clone();
   g.deleteAttribute('uv');
@@ -238,8 +446,16 @@ function coloredGeometry(geometry, hex) {
   return g;
 }
 
-function buildTrees(scene) {
-  const rng = mulberry32(7741);
+function instanced(geometry, material, count) {
+  const mesh = new THREE.InstancedMesh(geometry, material, count);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+// ---- Trees ---------------------------------------------------------------------------
+let pineAssets = null;
+function getPineAssets() {
+  if (pineAssets) return pineAssets;
   // Unit height so the wind shader's y^2 term means the same thing for every instance.
   const parts = [
     coloredGeometry(new THREE.CylinderGeometry(0.02, 0.035, 0.2, 5).translate(0, 0.1, 0), 0x3a2a1c),
@@ -247,14 +463,17 @@ function buildTrees(scene) {
     coloredGeometry(new THREE.ConeGeometry(0.18, 0.42, 7, 1, true).translate(0, 0.58, 0), 0x2d4c30),
     coloredGeometry(new THREE.ConeGeometry(0.11, 0.36, 7, 1, true).translate(0, 0.82, 0), 0x355638),
   ];
-  const geometry = mergeGeometries(parts);
-  const material = addWind(
-    new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
-    0.012,
-    0.9
-  );
-  const trees = new THREE.InstancedMesh(geometry, material, TREE_COUNT);
-  trees.frustumCulled = false;
+  pineAssets = {
+    geometry: mergeGeometries(parts),
+    material: addWind(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 0.012, 0.9),
+  };
+  return pineAssets;
+}
+
+function buildTrees(group) {
+  const rng = mulberry32(7741);
+  const { geometry, material } = getPineAssets();
+  const trees = instanced(geometry, material, TREE_COUNT);
 
   const matrix = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -285,17 +504,115 @@ function buildTrees(scene) {
     placed += 1;
   }
   trees.count = placed;
-  scene.add(trees);
+  group.add(trees);
 }
 
-function buildReeds(scene) {
-  const rng = mulberry32(90210);
+function buildRiverPines(group) {
+  const COUNT = 1500;
+  const rng = mulberry32(31337);
+  const { geometry, material } = getPineAssets();
+  const trees = instanced(geometry, material, COUNT);
+
+  const matrix = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const tint = new THREE.Color();
+
+  let placed = 0;
+  for (let attempt = 0; attempt < 200000 && placed < COUNT; attempt += 1) {
+    const x = (rng() - 0.5) * 900;
+    const z = 40 - rng() * 560;
+    const s = riverShore(x, z);
+    if (s < 5 || rng() > Math.exp(-s / 230)) continue;
+    if (fbm(x * 0.02 + 1, z * 0.02 + 7, 2) < 0.28) continue;
+    const h = riverHeight(x, z);
+    if (h < 0.8 || h > 110) continue;
+
+    const height = 13 + rng() * 13;
+    const width = height * (0.7 + rng() * 0.25);
+    position.set(x, h - 0.3, z);
+    q.setFromAxisAngle(up, rng() * Math.PI * 2);
+    scale.set(width, height, width);
+    trees.setMatrixAt(placed, matrix.compose(position, q, scale));
+    const v = 0.7 + rng() * 0.45;
+    tint.setRGB(v * 0.9, v, v * 1.05);
+    trees.setColorAt(placed, tint);
+    placed += 1;
+  }
+  trees.count = placed;
+  group.add(trees);
+}
+
+function buildLeafyTrees(group, avoid) {
+  const COUNT = 280;
+  const rng = mulberry32(2024);
+  const blob = (r, x, y, z, hex, sy = 0.85) =>
+    coloredGeometry(new THREE.IcosahedronGeometry(r, 1).scale(1, sy, 1).translate(x, y, z), hex);
+  const geometry = mergeGeometries([
+    coloredGeometry(new THREE.CylinderGeometry(0.03, 0.055, 0.5, 6).translate(0, 0.25, 0), 0x4b3622),
+    blob(0.3, 0, 0.64, 0, 0x3f7a2a),
+    blob(0.22, 0.2, 0.55, 0.05, 0x4e8c30),
+    blob(0.22, -0.19, 0.57, -0.06, 0x468433),
+    blob(0.2, 0.02, 0.84, 0.04, 0x5a9a38),
+    blob(0.18, -0.05, 0.52, 0.2, 0x3a7028),
+  ]);
+  const material = addWind(new THREE.MeshLambertMaterial({ vertexColors: true }), 0.014, 1.1);
+  const trees = instanced(geometry, material, COUNT);
+
+  const matrix = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const tint = new THREE.Color();
+
+  let placed = 0;
+  for (let attempt = 0; attempt < 100000 && placed < COUNT; attempt += 1) {
+    const x = (rng() - 0.5) * 700;
+    const z = 40 - rng() * 480;
+    const s = pondShore(x, z);
+    if (s < 4 || rng() > Math.exp(-s / 70)) continue;
+    if (avoid && Math.hypot(x - avoid.x, z - avoid.z) < 16) continue;
+    if (fbm(x * 0.025 + 3, z * 0.025 + 9, 2) < 0.4) continue;
+    const h = pondHeight(x, z);
+    if (h > 70) continue;
+
+    const height = 6 + rng() * 6;
+    const width = height * (0.9 + rng() * 0.35);
+    position.set(x, h - 0.2, z);
+    q.setFromAxisAngle(up, rng() * Math.PI * 2);
+    scale.set(width, height, width);
+    trees.setMatrixAt(placed, matrix.compose(position, q, scale));
+    const v = 0.78 + rng() * 0.4;
+    tint.setRGB(v * (0.9 + rng() * 0.2), v, v * 0.82);
+    trees.setColorAt(placed, tint);
+    placed += 1;
+  }
+  trees.count = placed;
+  group.add(trees);
+}
+
+// ---- Reeds, grass and lilies ---------------------------------------------------------
+const LAKE_REEDS = {
+  seed: 90210, count: REED_COUNT, clump: 0.47, latCap: Infinity, farD: 270,
+  halfWidth: lakeHalfWidth, height: terrainHeight,
+  pickD: (rng) => (rng() < 0.65 ? -1 + rng() * 120 : 120 + rng() * 150),
+};
+const POND_REEDS = {
+  seed: 4471, count: 1000, clump: 0.4, latCap: 33, farD: 70,
+  halfWidth: pondHalfWidth, height: pondHeight,
+  pickD: (rng) => -1 + rng() * 72,
+};
+
+function buildReeds(group, cfg) {
+  const rng = mulberry32(cfg.seed);
   const blade = coloredGeometry(new THREE.CylinderGeometry(0.004, 0.018, 0.86, 4).translate(0, 0.43, 0), 0x7c8a3e);
   const head = coloredGeometry(new THREE.CapsuleGeometry(0.02, 0.09, 2, 5).translate(0, 0.91, 0), 0x5a3b22);
   const geometry = mergeGeometries([blade, head]);
   const material = addWind(new THREE.MeshLambertMaterial({ vertexColors: true }), 0.09, 1.9);
-  const reeds = new THREE.InstancedMesh(geometry, material, REED_COUNT);
-  reeds.frustumCulled = false;
+  const reeds = instanced(geometry, material, cfg.count);
 
   const matrix = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -305,16 +622,16 @@ function buildReeds(scene) {
   const tint = new THREE.Color();
 
   let placed = 0;
-  for (let attempt = 0; attempt < 60000 && placed < REED_COUNT; attempt += 1) {
+  for (let attempt = 0; attempt < 60000 && placed < cfg.count; attempt += 1) {
     const side = rng() < 0.5 ? -1 : 1;
-    const d = rng() < 0.65 ? -1 + rng() * 120 : 120 + rng() * 150;
-    const x = side * (lakeHalfWidth(d, side) + (rng() * 3.2 - 2.4));
+    const d = cfg.pickD(rng);
+    const x = side * (cfg.halfWidth(d, side) + (rng() * 3.2 - 2.4));
     const z = -d;
-    if (Math.abs(x) < 0.86 * Math.max(d, 0) + 1.1) continue; // keep the casting cone open
+    if (Math.abs(x) < Math.min(0.86 * Math.max(d, 0) + 1.1, cfg.latCap + 2)) continue; // keep the casting cone open
     if (Math.abs(x) < DOCK_HALF_WIDTH + 1 && z > DOCK_END_Z - 1) continue;
-    if (fbm(x * 0.09, z * 0.09, 2) < 0.47) continue; // clumps, not an even hedge
+    if (fbm(x * 0.09, z * 0.09, 2) < cfg.clump) continue; // clumps, not an even hedge
 
-    const y = Math.min(0, terrainHeight(x, z)) - 0.05;
+    const y = Math.min(0, cfg.height(x, z)) - 0.05;
     const height = 1.4 + rng() * 1.3;
     position.set(x, y, z);
     euler.set((rng() - 0.5) * 0.2, rng() * Math.PI * 2, (rng() - 0.5) * 0.2);
@@ -327,10 +644,440 @@ function buildReeds(scene) {
     placed += 1;
   }
   reeds.count = placed;
-  scene.add(reeds);
+  group.add(reeds);
+  nearObjects.push(reeds);
 }
 
-// ---- Dock -------------------------------------------------------------------------
+function buildGrassTufts(group, avoid) {
+  const COUNT = 3600;
+  const rng = mulberry32(8080);
+  const blades = [];
+  for (let i = 0; i < 3; i += 1) {
+    const g = new THREE.ConeGeometry(0.025, 0.4, 3).translate(0, 0.2, 0);
+    g.rotateZ((i - 1) * 0.25);
+    g.rotateY(i * 1.1);
+    blades.push(coloredGeometry(g, i === 1 ? 0x7fae3e : 0x628f2f));
+  }
+  const material = addWind(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 0.35, 2.2);
+  const tufts = instanced(mergeGeometries(blades), material, COUNT);
+
+  const matrix = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const tint = new THREE.Color();
+
+  let placed = 0;
+  for (let attempt = 0; attempt < 120000 && placed < COUNT; attempt += 1) {
+    const x = (rng() - 0.5) * 220;
+    const z = 20 - rng() * 150;
+    const s = pondShore(x, z);
+    if (s < 0.3 || rng() > Math.exp(-s / 22)) continue;
+    if (avoid && Math.hypot(x - avoid.x, z - avoid.z) < 6) continue;
+    if (Math.abs(x) < DOCK_HALF_WIDTH + 0.5 && z > DOCK_END_Z - 1) continue;
+    const h = pondHeight(x, z);
+    const size = 0.8 + rng() * 1.1;
+    position.set(x, h - 0.02, z);
+    q.setFromAxisAngle(up, rng() * Math.PI * 2);
+    scale.set(size, size * (0.8 + rng() * 0.8), size);
+    tufts.setMatrixAt(placed, matrix.compose(position, q, scale));
+    const v = 0.75 + rng() * 0.5;
+    tint.setRGB(v, v, v * 0.8);
+    tufts.setColorAt(placed, tint);
+    placed += 1;
+  }
+  tufts.count = placed;
+  group.add(tufts);
+}
+
+function buildLilies(group) {
+  const PADS = 320;
+  const rng = mulberry32(606);
+  const padGeometry = new THREE.CircleGeometry(0.32, 14, 0.3, Math.PI * 2 - 0.6).rotateX(-Math.PI / 2);
+  const pads = instanced(padGeometry, new THREE.MeshLambertMaterial({ color: 0x4f8f30, side: THREE.DoubleSide }), PADS);
+  const flowerGeometry = new THREE.SphereGeometry(0.09, 6, 4).scale(1, 0.7, 1);
+  const flowers = instanced(flowerGeometry, new THREE.MeshLambertMaterial({ color: 0xffffff }), 60);
+
+  const matrix = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const tint = new THREE.Color();
+  const flowerColors = [0xf4b6c8, 0xffffff, 0xf7e27a, 0xf4b6c8];
+
+  let placed = 0;
+  let flowerCount = 0;
+  for (let attempt = 0; attempt < 60000 && placed < PADS; attempt += 1) {
+    const side = rng() < 0.5 ? -1 : 1;
+    const d = 2 + rng() * 66;
+    const x = side * (pondHalfWidth(d, side) - 1.2 - rng() * 11);
+    const z = -d;
+    // Keep lilies out of the area a lure can land in.
+    if (Math.abs(x) < Math.min(30, 0.86 * d) + 1.2 && d < 57) continue;
+    if (pondShore(x, z) > -1) continue;
+    if (fbm(x * 0.13 + 4, z * 0.13, 2) < 0.45) continue;
+
+    const size = 0.7 + rng() * 0.9;
+    position.set(x, 0.03, z);
+    q.setFromAxisAngle(up, rng() * Math.PI * 2);
+    scale.set(size, 1, size);
+    pads.setMatrixAt(placed, matrix.compose(position, q, scale));
+    const v = 0.75 + rng() * 0.5;
+    tint.setRGB(v * 0.95, v, v * 0.9);
+    pads.setColorAt(placed, tint);
+    if (placed % 5 === 0 && flowerCount < 60) {
+      position.set(x + (rng() - 0.5) * 0.3, 0.1, z + (rng() - 0.5) * 0.3);
+      flowers.setMatrixAt(flowerCount, matrix.compose(position, q, scale.set(1, 1, 1)));
+      tint.setHex(flowerColors[flowerCount % flowerColors.length]);
+      flowers.setColorAt(flowerCount, tint);
+      flowerCount += 1;
+    }
+    placed += 1;
+  }
+  pads.count = placed;
+  flowers.count = flowerCount;
+  group.add(pads, flowers);
+  nearObjects.push(pads, flowers);
+}
+
+// ---- The old mill ----------------------------------------------------------------------
+function gableRoof(w, h, d, hex) {
+  const A = [-w / 2, 0, -d / 2];
+  const B = [w / 2, 0, -d / 2];
+  const C = [w / 2, 0, d / 2];
+  const D = [-w / 2, 0, d / 2];
+  const R1 = [-w / 2, h, 0];
+  const R2 = [w / 2, h, 0];
+  const tris = [D, C, R2, D, R2, R1, B, A, R1, B, R1, R2, A, D, R1, C, B, R2];
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3));
+  geometry.computeVertexNormals();
+  const colors = [];
+  const c = new THREE.Color(hex);
+  for (let i = 0; i < tris.length; i += 1) colors.push(c.r, c.g, c.b);
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  return geometry;
+}
+
+function buildMill(group) {
+  const parts = [];
+  const add = (geometry, hex, matrix) => {
+    const g = coloredGeometry(geometry, hex);
+    g.applyMatrix4(matrix);
+    parts.push(g);
+  };
+  const block = (w, h, d, x, y, z, hex, rx = 0, ry = 0, rz = 0) =>
+    add(new THREE.BoxGeometry(w, h, d), hex, tm(x, y, z, rx, ry, rz));
+
+  block(8.4, 2.8, 6.4, 0, 0.4, 0, 0x8d8a82); // stone footing
+  block(7.6, 4.6, 5.6, 0, 4.1, 0, 0xd9ccb0); // plaster walls
+  const timber = 0x4a3425;
+  for (const x of [-3.7, -1.85, 0, 1.85, 3.7]) block(0.24, 4.6, 0.12, x, 4.1, 2.85, timber);
+  for (const y of [1.9, 4.1, 6.3]) block(7.8, 0.22, 0.12, 0, y, 2.85, timber);
+  block(1.4, 2.3, 0.14, 0.9, 2.75, 2.88, 0x3b2a1c); // door
+  block(0.9, 0.95, 0.14, -2.6, 4.7, 2.88, 0x2a3846); // windows
+  block(0.9, 0.95, 0.14, 2.9, 4.7, 2.88, 0x2a3846);
+  block(1.1, 1.1, 0.14, 0, 5.4, 2.88, 0x3b2a1c); // loft hatch
+  add(gableRoof(8.8, 3.4, 7.2, 0x7a4636), 0x7a4636, tm(0, 6.4, 0));
+  block(0.9, 2.4, 0.9, 2.6, 8.2, -1.2, 0x8d8a82); // chimney
+
+  // Water wheel on the left wall.
+  const wx = -4.7;
+  const wy = 2.6;
+  const wz = 0.4;
+  const R = 2.1;
+  add(new THREE.TorusGeometry(R, 0.1, 5, 20), 0x5a4129, tm(wx, wy, wz, 0, Math.PI / 2, 0));
+  for (let i = 0; i < 4; i += 1) {
+    block(0.12, R * 2, 0.1, wx, wy, wz, 0x5a4129, (i * Math.PI) / 4);
+  }
+  for (let i = 0; i < 12; i += 1) {
+    const a = (i * Math.PI * 2) / 12;
+    block(1.0, 0.07, 0.55, wx, wy + Math.cos(a) * R, wz + Math.sin(a) * R, 0x6b4e30, a);
+  }
+  block(0.3, 0.3, 1.2, wx + 0.5, wy, wz, 0x4a3425); // axle stub into the wall
+
+  const mesh = new THREE.Mesh(
+    mergeGeometries(parts),
+    new THREE.MeshLambertMaterial({ vertexColors: true })
+  );
+  mesh.frustumCulled = false;
+
+  // Stand it on the far bank, left of the line of fire, facing the water.
+  const mx = -17;
+  let d = 50;
+  while (d < 140 && pondShore(mx, -d) < 9) d += 1;
+  const mz = -d - 3;
+  let y = -Infinity;
+  for (const [dx, dz] of [[-4, -3], [4, -3], [-4, 3], [4, 3], [0, 0]]) y = Math.max(y, pondHeight(mx + dx, mz + dz));
+  mesh.position.set(mx, y - 0.3, mz);
+  mesh.rotation.y = 0.18;
+  mesh.scale.setScalar(1.35);
+  group.add(mesh);
+  return { x: mx, z: mz };
+}
+
+// ---- Boulders and river foam -----------------------------------------------------------
+let softTexture = null;
+function getSoftTexture() {
+  if (softTexture) return softTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  const gradient = ctx.createRadialGradient(32, 32, 2, 32, 32, 32);
+  gradient.addColorStop(0, 'rgba(255,255,255,0.9)');
+  gradient.addColorStop(0.55, 'rgba(255,255,255,0.4)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, 64, 64);
+  softTexture = new THREE.CanvasTexture(canvas);
+  return softTexture;
+}
+
+function rockGeometry() {
+  const g = new THREE.IcosahedronGeometry(1, 2);
+  const pos = g.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i += 1) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const n = valueNoise(x * 2.1 + 10 + y * 1.3, z * 2.1 + y * 1.7);
+    const r = 1 + (n - 0.5) * 0.6;
+    pos.setXYZ(i, x * r, y * r * 0.72, z * r);
+    const shade = 0.62 + valueNoise(x * 4 + 3, z * 4 + y * 3) * 0.38;
+    colors[i * 3] = shade * 0.8;
+    colors[i * 3 + 1] = shade * 0.79;
+    colors[i * 3 + 2] = shade * 0.76;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  g.deleteAttribute('uv');
+  g.computeVertexNormals();
+  return g;
+}
+
+function buildRiverRocks(group) {
+  const BANK = 150;
+  const WATER = 90;
+  const rng = mulberry32(5577);
+  const rocks = instanced(rockGeometry(), new THREE.MeshLambertMaterial({ vertexColors: true }), BANK + WATER);
+  const foamGeometry = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const foamMaterial = new THREE.MeshBasicMaterial({
+    map: getSoftTexture(), transparent: true, opacity: 0.8, depthWrite: false, color: 0xe8f4f6,
+  });
+  const foam = instanced(foamGeometry, foamMaterial, WATER);
+  foam.renderOrder = 1;
+
+  const matrix = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const euler = new THREE.Euler();
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const tint = new THREE.Color();
+  const noRot = new THREE.Quaternion();
+
+  let placed = 0;
+  let foamCount = 0;
+  const putRock = (x, y, z, r) => {
+    euler.set((rng() - 0.5) * 0.4, rng() * Math.PI * 2, (rng() - 0.5) * 0.4);
+    q.setFromEuler(euler);
+    position.set(x, y, z);
+    scale.set(r * (0.9 + rng() * 0.5), r * (0.8 + rng() * 0.5), r * (0.9 + rng() * 0.5));
+    rocks.setMatrixAt(placed, matrix.compose(position, q, scale));
+    const v = 0.7 + rng() * 0.5;
+    tint.setRGB(v, v * (0.95 + rng() * 0.08), v * (0.9 + rng() * 0.1));
+    rocks.setColorAt(placed, tint);
+    placed += 1;
+  };
+
+  // Boulders along both banks.
+  for (let attempt = 0, n = 0; attempt < 20000 && n < BANK; attempt += 1) {
+    const side = rng() < 0.5 ? -1 : 1;
+    const d = 3 + rng() * (rng() < 0.7 ? 120 : 260);
+    const e = riverEdges(d, side);
+    const edge = side > 0 ? e.right : e.left;
+    const x = edge + side * (rng() * 6 - 1.5);
+    const z = -d;
+    const s = riverShore(x, z);
+    if (s < -1.5 || s > 8) continue;
+    if (Math.abs(x) < DOCK_HALF_WIDTH + 1.5 && z > DOCK_END_Z - 2) continue;
+    const r = 0.5 + Math.pow(rng(), 2) * 2.4;
+    putRock(x, Math.max(riverHeight(x, z), -0.2) - 0.1 * r, z, r);
+    n += 1;
+  }
+
+  // Rocks standing in the water, outside the area a lure can land in.
+  for (let attempt = 0, n = 0; attempt < 40000 && n < WATER; attempt += 1) {
+    const d = 4 + rng() * 240;
+    const e = riverEdges(d, 1);
+    const x = e.left + (e.right - e.left) * rng();
+    const z = -d;
+    const r = 0.5 + Math.pow(rng(), 2) * 2.2;
+    if (riverShore(x, z) > -r - 1.5) continue;
+    if (d < 104 && Math.abs(x) < Math.min(24, 0.86 * d) + r + 1.5) continue;
+    putRock(x, -0.1 * r, z, r);
+    position.set(x, 0.03, z - r * 1.8);
+    scale.set(r * 2.4, 1, r * 4.2);
+    foam.setMatrixAt(foamCount, matrix.compose(position, noRot, scale));
+    foamCount += 1;
+    n += 1;
+  }
+  rocks.count = placed;
+  foam.count = foamCount;
+  group.add(rocks, foam);
+  nearObjects.push(foam);
+}
+
+// Pale streaks drifting downstream so the current reads even where the water is calm.
+function buildRiverStreaks(group) {
+  const COUNT = 90;
+  const SPEED = 2.6;
+  const rng = mulberry32(1919);
+  const material = new THREE.MeshBasicMaterial({
+    map: getSoftTexture(), transparent: true, opacity: 0.38, depthWrite: false, color: 0xdceef0,
+  });
+  const streaks = instanced(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), material, COUNT);
+  streaks.renderOrder = 1;
+  const items = [];
+  for (let i = 0; i < COUNT; i += 1) {
+    items.push({ d: 4 + rng() * 150, u: rng(), w: 0.25 + rng() * 0.5, l: 3 + rng() * 6 });
+  }
+  const matrix = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  group.add(streaks);
+  nearObjects.push(streaks);
+
+  return (dt) => {
+    for (let i = 0; i < COUNT; i += 1) {
+      const it = items[i];
+      it.d += SPEED * dt;
+      if (it.d > 154) {
+        it.d = 4;
+        it.u = rng();
+        it.w = 0.25 + rng() * 0.5;
+        it.l = 3 + rng() * 6;
+      }
+      const e = riverEdges(it.d, 1);
+      const x = e.left + 3 + (e.right - e.left - 6) * it.u;
+      // Stay out of the lure's landing area so a streak never looks like a lure strike zone.
+      const fade = smooth(4, 16, it.d) * (1 - smooth(110, 154, it.d));
+      position.set(x, 0.04, -it.d);
+      scale.set(it.w * fade, 1, it.l * fade + 0.001);
+      streaks.setMatrixAt(i, matrix.compose(position, q, scale));
+    }
+    streaks.instanceMatrix.needsUpdate = true;
+  };
+}
+
+// ---- Sky: clouds and seabirds -------------------------------------------------------
+function cloudTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  const rng = mulberry32(777);
+  for (let i = 0; i < 16; i += 1) {
+    const x = 40 + rng() * 176;
+    const y = 60 + (rng() - 0.5) * 26 - Math.abs(x - 128) * 0.12;
+    const r = 20 + rng() * 26;
+    const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+    g.addColorStop(0, 'rgba(255,255,255,0.85)');
+    g.addColorStop(0.6, 'rgba(255,255,255,0.4)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 256, 128);
+  }
+  // Flatten the underside.
+  ctx.globalCompositeOperation = 'destination-in';
+  const fade = ctx.createLinearGradient(0, 70, 0, 100);
+  fade.addColorStop(0, 'rgba(0,0,0,1)');
+  fade.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = fade;
+  ctx.fillRect(0, 0, 256, 128);
+  return new THREE.CanvasTexture(canvas);
+}
+
+function buildClouds(group, { count, seed, minY, maxY, brightness, opacity }) {
+  const rng = mulberry32(seed);
+  const material = new THREE.SpriteMaterial({
+    map: cloudTexture(), transparent: true, depthWrite: false, fog: false, opacity,
+    color: new THREE.Color().setRGB(brightness, brightness, brightness),
+  });
+  for (let i = 0; i < count; i += 1) {
+    const sprite = new THREE.Sprite(material);
+    const angle = (rng() - 0.5) * Math.PI * 0.95;
+    const radius = 650 + rng() * 500;
+    const width = 140 + rng() * 220;
+    sprite.position.set(Math.sin(angle) * radius, minY + rng() * (maxY - minY), -Math.cos(angle) * radius);
+    sprite.scale.set(width, width * 0.42, 1);
+    group.add(sprite);
+  }
+}
+
+function buildSeabirds(group) {
+  const COUNT = 14;
+  const rng = mulberry32(246);
+  const wing = new THREE.BufferGeometry();
+  wing.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0.13, 0, 0, -0.13, -0.95, 0.05, 0.02,
+    0, 0, -0.13, 0, 0, 0.13, 0.95, 0.05, 0.02,
+    0, 0.02, 0.28, 0, 0.02, -0.32, 0, -0.02, 0,
+  ], 3));
+  wing.computeVertexNormals();
+  const birdTime = { value: 0 };
+  const material = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uBirdTime = birdTime;
+    shader.vertexShader = `uniform float uBirdTime;\n${shader.vertexShader}`.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      transformed.y += abs(transformed.x) * sin(uBirdTime * 7.0 + instanceMatrix[3].x * 0.37) * 0.32;`
+    );
+  };
+  const birds = instanced(wing, material, COUNT);
+  group.add(birds);
+  nearObjects.push(birds);
+
+  const flock = [];
+  for (let i = 0; i < COUNT; i += 1) {
+    flock.push({
+      cx: (rng() - 0.5) * 80, cz: -100 - rng() * 60, r: 40 + rng() * 80, y: 7 + rng() * 22,
+      a: rng() * Math.PI * 2, w: (0.18 + rng() * 0.2) * (rng() < 0.5 ? -1 : 1), size: 1.6 + rng() * 0.8,
+    });
+  }
+  const matrix = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+
+  return (dt, time) => {
+    birdTime.value = time;
+    for (let i = 0; i < COUNT; i += 1) {
+      const b = flock[i];
+      b.a += b.w * dt;
+      const vx = -Math.sin(b.a) * Math.sign(b.w);
+      const vz = Math.cos(b.a) * Math.sign(b.w);
+      position.set(b.cx + Math.cos(b.a) * b.r, b.y + Math.sin(time * 0.7 + i) * 1.2, b.cz + Math.sin(b.a) * b.r);
+      euler.set(0, Math.atan2(-vx, -vz), -0.35 * Math.sign(b.w));
+      q.setFromEuler(euler);
+      scale.setScalar(b.size);
+      birds.setMatrixAt(i, matrix.compose(position, q, scale));
+    }
+    birds.instanceMatrix.needsUpdate = true;
+  };
+}
+
+// ---- Docks -------------------------------------------------------------------------
+let sharedWood = null;
+function getWoodTexture() {
+  if (!sharedWood) sharedWood = woodTexture();
+  return sharedWood;
+}
+
 function woodTexture() {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
@@ -360,45 +1107,52 @@ function woodTexture() {
   return texture;
 }
 
-function buildDock(scene) {
-  const rng = mulberry32(5150);
-  const material = new THREE.MeshStandardMaterial({
-    map: woodTexture(),
-    roughness: 0.9,
-    envMapIntensity: 0.5,
-  });
-  const BACK_Z = 3.4;
-  const PLANK_W = 0.145;
-  const PLANK_GAP = 0.012;
+const DOCK_BACK_Z = 3.4;
+
+function plankInstances(group, material, { seed, plankW, gap, tintFn }) {
+  const rng = mulberry32(seed);
   const PLANK_H = 0.04;
   const length = DOCK_HALF_WIDTH * 2;
-  const count = Math.ceil((BACK_Z - DOCK_END_Z) / (PLANK_W + PLANK_GAP));
-
-  const planks = new THREE.InstancedMesh(
-    new THREE.BoxGeometry(length, PLANK_H, PLANK_W),
-    material,
-    count
-  );
+  const count = Math.ceil((DOCK_BACK_Z - DOCK_END_Z) / (plankW + gap));
+  const planks = new THREE.InstancedMesh(new THREE.BoxGeometry(length, PLANK_H, plankW), material, count);
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const e = new THREE.Euler();
   const p = new THREE.Vector3();
-  const s = new THREE.Vector3();
+  const s = new THREE.Vector3(1, 1, 1);
   const tint = new THREE.Color();
   for (let i = 0; i < count; i += 1) {
-    const z = DOCK_END_Z + PLANK_W / 2 + i * (PLANK_W + PLANK_GAP);
+    const z = DOCK_END_Z + plankW / 2 + i * (plankW + gap);
     p.set((rng() - 0.5) * 0.05, DECK_Y - PLANK_H / 2 - (rng() < 0.2 ? 0.003 : 0), z);
     e.set(0, (rng() - 0.5) * 0.008, (rng() - 0.5) * 0.004);
     q.setFromEuler(e);
-    s.set(1, 1, 1);
     planks.setMatrixAt(i, m.compose(p, q, s));
-    const v = 0.68 + rng() * 0.42;
-    tint.setRGB(v, v * (0.95 + rng() * 0.05), v * (0.86 + rng() * 0.1));
+    tintFn(tint, rng);
     planks.setColorAt(i, tint);
   }
-  scene.add(planks);
+  group.add(planks);
+}
 
-  const postZ = [BACK_Z - 0.3, 1.2, -0.7, -2.2, DOCK_END_Z + 0.08];
+function buildWoodDock() {
+  const group = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({
+    map: getWoodTexture(),
+    roughness: 0.9,
+    envMapIntensity: 0.5,
+  });
+  plankInstances(group, material, {
+    seed: 5150, plankW: 0.145, gap: 0.012,
+    tintFn: (tint, rng) => {
+      const v = 0.68 + rng() * 0.42;
+      tint.setRGB(v, v * (0.95 + rng() * 0.05), v * (0.86 + rng() * 0.1));
+    },
+  });
+
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const p = new THREE.Vector3();
+  const s = new THREE.Vector3();
+  const postZ = [DOCK_BACK_Z - 0.3, 1.2, -0.7, -2.2, DOCK_END_Z + 0.08];
   const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.075, 0.09, 1, 10), material, postZ.length * 2);
   const POST_BOTTOM = -2.2;
   let index = 0;
@@ -412,7 +1166,93 @@ function buildDock(scene) {
       index += 1;
     }
   }
-  scene.add(posts);
+  group.add(posts);
+  return group;
+}
+
+// A heavy, weathered sea pier: dark salt-grey planks, steel-capped bollards, tyre fenders and a
+// lifebuoy. The end posts sit where the wooden dock's do, so the spare rod and net still fit.
+function buildPier() {
+  const group = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ map: getWoodTexture(), roughness: 0.95, envMapIntensity: 0.3 });
+  plankInstances(group, wood, {
+    seed: 881, plankW: 0.19, gap: 0.016,
+    tintFn: (tint, rng) => {
+      const v = 0.36 + rng() * 0.3;
+      tint.setRGB(v * 0.95, v * 0.97, v * (0.98 + rng() * 0.06));
+    },
+  });
+
+  const dark = new THREE.MeshStandardMaterial({ color: 0x3e3b38, roughness: 0.9, envMapIntensity: 0.3 });
+  const steel = new THREE.MeshStandardMaterial({ color: 0x2c3236, roughness: 0.5, metalness: 0.7, envMapIntensity: 0.8 });
+  const rubber = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.95 });
+  const length = DOCK_BACK_Z - DOCK_END_Z;
+  const midZ = (DOCK_BACK_Z + DOCK_END_Z) / 2;
+
+  // Stringers under the deck edge, and a low curb along it.
+  const stringers = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.26, length), dark, 2);
+  const curbs = new THREE.InstancedMesh(new THREE.BoxGeometry(0.07, 0.09, length - 0.2), dark, 2);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const p = new THREE.Vector3();
+  const one = new THREE.Vector3(1, 1, 1);
+  [-1, 1].forEach((side, i) => {
+    stringers.setMatrixAt(i, m.compose(p.set(side * (DOCK_HALF_WIDTH - 0.08), DECK_Y - 0.17, midZ), q, one));
+    curbs.setMatrixAt(i, m.compose(p.set(side * (DOCK_HALF_WIDTH - 0.02), DECK_Y + 0.045, midZ), q, one));
+  });
+  group.add(stringers, curbs);
+
+  const postZ = [DOCK_BACK_Z - 0.3, 1.2, -0.7, -2.2, DOCK_END_Z + 0.08];
+  const POST_BOTTOM = -2.6;
+  const endPosts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.075, 0.09, 1, 10), dark, 2);
+  const heavyCount = (postZ.length - 1) * 2;
+  const heavyPosts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.12, 0.14, 1, 10), dark, heavyCount);
+  const bollards = new THREE.InstancedMesh(
+    lathe([[0, 0], [0.09, 0], [0.085, 0.16], [0.12, 0.2], [0.12, 0.25], [0, 0.26]], 12), steel, heavyCount
+  );
+  let heavy = 0;
+  postZ.forEach((z, zi) => {
+    [-1, 1].forEach((side, si) => {
+      const x = side * (DOCK_HALF_WIDTH + 0.03);
+      if (zi === postZ.length - 1) {
+        const top = DECK_Y + 0.95;
+        endPosts.setMatrixAt(si, m.compose(p.set(x, (top + POST_BOTTOM) / 2, z), q, new THREE.Vector3(1, top - POST_BOTTOM, 1)));
+      } else {
+        const top = DECK_Y + 0.02;
+        heavyPosts.setMatrixAt(heavy, m.compose(p.set(x, (top + POST_BOTTOM) / 2, z), q, new THREE.Vector3(1, top - POST_BOTTOM, 1)));
+        bollards.setMatrixAt(heavy, m.compose(p.set(x, top - 0.02, z), q, one));
+        heavy += 1;
+      }
+    });
+  });
+  group.add(endPosts, heavyPosts, bollards);
+
+  // Tyre fenders hung against the outside piles, and a lifebuoy by the back post.
+  const tyreZ = [-2.2, -0.7, 1.2];
+  const tyres = new THREE.InstancedMesh(new THREE.TorusGeometry(0.2, 0.085, 8, 14), rubber, tyreZ.length * 2);
+  let t = 0;
+  for (const z of tyreZ) {
+    for (const side of [-1, 1]) {
+      const rot = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, 0));
+      tyres.setMatrixAt(t, m.compose(p.set(side * (DOCK_HALF_WIDTH + 0.27), 0.08, z), rot, one));
+      t += 1;
+    }
+  }
+  group.add(tyres);
+
+  const buoyBands = [];
+  for (let i = 0; i < 4; i += 1) {
+    const hex = i % 2 === 0 ? 0xd9442b : 0xf2eee4;
+    buoyBands.push(coloredGeometry(new THREE.TorusGeometry(0.3, 0.07, 6, 6, Math.PI / 2).rotateZ((i * Math.PI) / 2), hex));
+  }
+  const buoy = new THREE.Mesh(
+    mergeGeometries(buoyBands),
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 })
+  );
+  buoy.position.set(DOCK_HALF_WIDTH + 0.17, DECK_Y + 0.45, 1.2);
+  buoy.rotation.y = Math.PI / 2;
+  group.add(buoy);
+  return group;
 }
 
 // ---- Gear props, batched by material so the whole set costs a few draw calls ------
@@ -687,6 +1527,9 @@ function shadowTexture() {
 }
 
 function buildProps(scene) {
+  const propsGroup = new THREE.Group();
+  scene.add(propsGroup);
+  nearObjects.push(propsGroup);
   buildTackleBox();
   buildThermos();
   buildBucket();
@@ -694,15 +1537,15 @@ function buildProps(scene) {
   buildLandingNet();
   buildSpareRod();
 
-  scene.add(new THREE.Mesh(
+  propsGroup.add(new THREE.Mesh(
     mergeGeometries(batches.paint),
     new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, envMapIntensity: 0.6 })
   ));
-  scene.add(new THREE.Mesh(
+  propsGroup.add(new THREE.Mesh(
     mergeGeometries(batches.metal),
     new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.34, metalness: 0.85, envMapIntensity: 1 })
   ));
-  scene.add(new THREE.Mesh(
+  propsGroup.add(new THREE.Mesh(
     mergeGeometries(batches.net),
     new THREE.MeshBasicMaterial({ vertexColors: true, wireframe: true, transparent: true, opacity: 0.75 })
   ));
@@ -711,34 +1554,103 @@ function buildProps(scene) {
     new THREE.MeshBasicMaterial({ map: shadowTexture(), transparent: true, depthWrite: false })
   );
   shadows.renderOrder = 1;
-  scene.add(shadows);
+  propsGroup.add(shadows);
 }
 
 // The water's normals warp reflections of objects this close into dark jagged blobs.
-function hideFromReflection(objects) {
+// Objects of hidden maps are already invisible, so each one's visibility is put back as it was.
+function hideFromReflection() {
   const renderWaterReflection = water.onBeforeRender;
   water.onBeforeRender = (renderer, scene, camera) => {
-    objects.forEach((object) => { object.visible = false; });
+    const was = nearObjects.map((object) => object.visible);
+    nearObjects.forEach((object) => { object.visible = false; });
     renderWaterReflection.call(water, renderer, scene, camera);
-    objects.forEach((object) => { object.visible = true; });
+    nearObjects.forEach((object, i) => { object.visible = was[i]; });
   };
+}
+
+// ---- Maps, built the first time they are visited and then only shown or hidden ------
+const DOCK_FOR_MAP = { pond: 'wood', river: 'wood', lake: 'wood', ocean: 'pier' };
+
+function buildMapEntry(id) {
+  const group = new THREE.Group();
+  group.visible = false;
+  sceneRef.add(group);
+  let update = null;
+
+  if (id === 'lake') {
+    buildTerrain(group, LAKE_DEF);
+    buildTrees(group);
+    buildReeds(group, LAKE_REEDS);
+  } else if (id === 'pond') {
+    buildTerrain(group, POND_DEF);
+    const mill = buildMill(group);
+    buildLeafyTrees(group, mill);
+    buildGrassTufts(group, mill);
+    buildReeds(group, POND_REEDS);
+    buildLilies(group);
+    buildClouds(group, { count: 7, seed: 91, minY: 70, maxY: 190, brightness: 1.3, opacity: 0.8 });
+  } else if (id === 'river') {
+    buildTerrain(group, RIVER_DEF);
+    buildRiverPines(group);
+    buildRiverRocks(group);
+    const streaks = buildRiverStreaks(group);
+    buildClouds(group, { count: 6, seed: 17, minY: 100, maxY: 220, brightness: 1.15, opacity: 0.6 });
+    update = (dt) => streaks(dt);
+  } else if (id === 'ocean') {
+    buildClouds(group, { count: 18, seed: 303, minY: 60, maxY: 220, brightness: 1.3, opacity: 0.85 });
+    const birds = buildSeabirds(group);
+    update = (dt, time) => birds(dt, time);
+  }
+  return { group, update };
 }
 
 // ---- Public API ----------------------------------------------------------------
 export function buildWorld(scene, renderer) {
-  const sunDirection = buildAtmosphere(scene, renderer);
-  buildWater(scene, sunDirection);
-  buildTerrain(scene);
-  buildTrees(scene);
-  const firstNearObject = scene.children.length;
-  buildReeds(scene);
-  buildDock(scene);
+  sceneRef = scene;
+  rendererRef = renderer;
+  buildAtmosphere(scene, renderer);
+  buildWater(scene);
   buildProps(scene);
-  hideFromReflection(scene.children.slice(firstNearObject));
-  return { sunDirection };
+  hideFromReflection();
+  return { sunDirection: sunVector(MAP_STYLE.lake) };
+}
+
+// Shows one map's scenery and look. Unknown or missing ids fall back to the starter pond.
+export function setWorldMap(mapId) {
+  if (!sceneRef) return;
+  const id = MAP_STYLE[mapId] ? mapId : 'pond';
+  if (id === currentMapId) return;
+
+  if (!mapEntries[id]) mapEntries[id] = buildMapEntry(id);
+  const dockKind = DOCK_FOR_MAP[id];
+  if (!docks[dockKind]) {
+    docks[dockKind] = dockKind === 'pier' ? buildPier() : buildWoodDock();
+    sceneRef.add(docks[dockKind]);
+    nearObjects.push(docks[dockKind]);
+  }
+  for (const key of Object.keys(mapEntries)) mapEntries[key].group.visible = key === id;
+  for (const key of Object.keys(docks)) docks[key].visible = key === dockKind;
+  applyStyle(id);
+  currentMapId = id;
 }
 
 export function updateWorld(dt, time) {
   if (water) water.material.uniforms.time.value += dt * 0.8;
   windTime.value = time;
+  const entry = currentMapId && mapEntries[currentMapId];
+  if (entry && entry.update) entry.update(dt, time);
+}
+
+// Test helpers: is there water at (x, z) on this map, and how many objects the world holds.
+export function isWaterAt(mapId, x, z) {
+  if (mapId === 'ocean') return true;
+  const shore = { pond: pondShore, river: riverShore, lake: shoreDistance }[mapId];
+  return shore(x, z) <= -0.5;
+}
+
+export function worldObjectCount() {
+  let count = 0;
+  sceneRef.traverse(() => { count += 1; });
+  return { total: count, maps: Object.keys(mapEntries).length, docks: Object.keys(docks).length };
 }

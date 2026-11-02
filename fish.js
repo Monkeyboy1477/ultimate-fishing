@@ -5,6 +5,7 @@
 // how its pull vector is generated frame to frame during the fight.
 
 import { BITE_DEADLINE_S, CATCH_TIME_LIMIT_S } from './constants.js';
+import { getMap } from './maps.js';
 
 // ---------------------------------------------------------------------------
 // Species table
@@ -384,6 +385,199 @@ export const FISH_SPECIES = [
     sellBasePrice: 8000,
     sellPricePerPound: 60,
   },
+  // -- Added with the maps: pond, river, lake and ocean fish ------------------
+  {
+    id: 'pumpkinseed',
+    name: 'Pumpkinseed',
+    minWeight: 0.1,
+    maxWeight: 1,
+    staminaMax: 16,
+    pullStrength: 0.26,
+    pullPattern: 'erratic',
+    preferredDistance: 0.2,
+    rarity: 0.9,
+    biteChance: 0.34,
+    rarityTier: 1,
+    color: 0xc98a3a,
+    sellBasePrice: 5,
+    sellPricePerPound: 2,
+  },
+  {
+    id: 'black_crappie',
+    name: 'Black Crappie',
+    minWeight: 0.25,
+    maxWeight: 3,
+    staminaMax: 22,
+    pullStrength: 0.36,
+    pullPattern: 'erratic',
+    preferredDistance: 0.45,
+    rarity: 0.7,
+    biteChance: 0.28,
+    rarityTier: 1,
+    color: 0x7d8a78,
+    sellBasePrice: 6,
+    sellPricePerPound: 2,
+  },
+  {
+    id: 'brown_bullhead',
+    name: 'Brown Bullhead',
+    minWeight: 0.5,
+    maxWeight: 4,
+    staminaMax: 26,
+    pullStrength: 0.4,
+    pullPattern: 'diving',
+    preferredDistance: 0.7,
+    rarity: 0.6,
+    biteChance: 0.24,
+    rarityTier: 1,
+    color: 0x5c4a32,
+    sellBasePrice: 6,
+    sellPricePerPound: 2,
+  },
+  {
+    id: 'atlantic_mackerel',
+    name: 'Atlantic Mackerel',
+    minWeight: 0.5,
+    maxWeight: 5,
+    staminaMax: 24,
+    pullStrength: 0.42,
+    pullPattern: 'erratic',
+    preferredDistance: 0.15,
+    rarity: 0.9,
+    biteChance: 0.3,
+    rarityTier: 1,
+    color: 0x3f7f8f,
+    sellBasePrice: 7,
+    sellPricePerPound: 2,
+  },
+  {
+    id: 'brown_trout',
+    name: 'Brown Trout',
+    minWeight: 1,
+    maxWeight: 20,
+    staminaMax: 50,
+    pullStrength: 0.68,
+    pullPattern: 'surge',
+    preferredDistance: 0.55,
+    rarity: 0.42,
+    biteChance: 0.18,
+    rarityTier: 2,
+    color: 0x8a6a3a,
+    sellBasePrice: 5,
+    sellPricePerPound: 6,
+  },
+  {
+    id: 'barracuda',
+    name: 'Barracuda',
+    minWeight: 3,
+    maxWeight: 40,
+    staminaMax: 58,
+    pullStrength: 0.76,
+    pullPattern: 'surge',
+    preferredDistance: 0.3,
+    rarity: 0.42,
+    biteChance: 0.2,
+    rarityTier: 2,
+    color: 0x8c9aa3,
+    sellBasePrice: 6,
+    sellPricePerPound: 6,
+  },
+  {
+    id: 'red_snapper',
+    name: 'Red Snapper',
+    minWeight: 2,
+    maxWeight: 35,
+    staminaMax: 60,
+    pullStrength: 0.7,
+    pullPattern: 'diving',
+    preferredDistance: 0.45,
+    rarity: 0.42,
+    biteChance: 0.2,
+    rarityTier: 2,
+    color: 0xc2453d,
+    sellBasePrice: 6,
+    sellPricePerPound: 6,
+  },
+  {
+    id: 'lake_trout',
+    name: 'Lake Trout',
+    minWeight: 5,
+    maxWeight: 60,
+    staminaMax: 110,
+    pullStrength: 0.82,
+    pullPattern: 'diving',
+    preferredDistance: 0.6,
+    rarity: 0.3,
+    biteChance: 0.2,
+    rarityTier: 3,
+    color: 0x5f6f62,
+    sellBasePrice: 11,
+    sellPricePerPound: 6,
+  },
+  {
+    id: 'mahi_mahi',
+    name: 'Mahi-Mahi',
+    minWeight: 5,
+    maxWeight: 60,
+    staminaMax: 110,
+    pullStrength: 0.86,
+    pullPattern: 'erratic',
+    preferredDistance: 0.55,
+    rarity: 0.3,
+    biteChance: 0.2,
+    rarityTier: 3,
+    color: 0x3fae6a,
+    sellBasePrice: 12,
+    sellPricePerPound: 7,
+  },
+  {
+    id: 'yellowfin_tuna',
+    name: 'Yellowfin Tuna',
+    minWeight: 30,
+    maxWeight: 300,
+    staminaMax: 175,
+    pullStrength: 0.92,
+    pullPattern: 'diving',
+    preferredDistance: 0.7,
+    rarity: 0.16,
+    biteChance: 0.18,
+    rarityTier: 4,
+    color: 0x26406f,
+    sellBasePrice: 30,
+    sellPricePerPound: 9,
+  },
+  {
+    id: 'sailfish',
+    name: 'Sailfish',
+    minWeight: 40,
+    maxWeight: 220,
+    staminaMax: 165,
+    pullStrength: 0.9,
+    pullPattern: 'surge',
+    preferredDistance: 0.8,
+    rarity: 0.15,
+    biteChance: 0.17,
+    rarityTier: 4,
+    color: 0x274f86,
+    sellBasePrice: 35,
+    sellPricePerPound: 12,
+  },
+  {
+    id: 'tiger_shark',
+    name: 'Tiger Shark',
+    minWeight: 200,
+    maxWeight: 1400,
+    staminaMax: 255,
+    pullStrength: 2.5,
+    pullPattern: 'surge',
+    preferredDistance: 0.88,
+    rarity: 0.15,
+    biteChance: 0.03,
+    rarityTier: 5,
+    color: 0x6c7560,
+    sellBasePrice: 1200,
+    sellPricePerPound: 30,
+  },
 ];
 
 export const RARITY_TIER_NAMES = {
@@ -425,9 +619,18 @@ function clamp01(v) {
 
 // Derives a 0..1 "how far out / how deep" proxy from where the lure landed,
 // from casting3d.js's 3D cast result (landingDistance is meters from shore).
-function distanceProxy(cast) {
+// On a map, 1 means that map's farthest water, so small maps still have near and far fish.
+function distanceProxy(cast, map) {
   const d = cast?.landingDistance ?? 0;
-  return clamp01(d / MAX_CAST_DISTANCE_M);
+  return clamp01(d / (map?.maxCastM ?? MAX_CAST_DISTANCE_M));
+}
+
+// The fish on a map that will take this lure. With no map, every species counts.
+export function eligibleSpeciesFor(lure, mapId) {
+  const map = getMap(mapId);
+  return FISH_SPECIES.filter(
+    (species) => canLureHook(lure, species) && (!map || map.speciesIds.includes(species.id)),
+  );
 }
 
 // How well a species' preferred distance matches the current cast distance.
@@ -449,13 +652,13 @@ export function canLureHook(lure, species) {
   return species.rarityTier <= lure.maxRarityTier && species.maxWeight > (lure.minFishLb ?? 0);
 }
 
-export function trySpawnBite(cast, waitElapsed, dt, lureStats) {
+export function trySpawnBite(cast, waitElapsed, dt, lureStats, mapId) {
   if (dt <= 0) return null;
 
   const lure = lureStats || DEFAULT_LURE_STATS;
   const biteRateMultiplier = lure.biteRateMultiplier ?? DEFAULT_LURE_STATS.biteRateMultiplier;
 
-  const eligibleSpecies = FISH_SPECIES.filter((species) => canLureHook(lure, species));
+  const eligibleSpecies = eligibleSpeciesFor(lure, mapId);
   if (eligibleSpecies.length === 0) return null;
 
   if (waitElapsed < MIN_BITE_WAIT_S) return null;
@@ -464,7 +667,7 @@ export function trySpawnBite(cast, waitElapsed, dt, lureStats) {
     return null;
   }
 
-  const distance = distanceProxy(cast);
+  const distance = distanceProxy(cast, getMap(mapId));
   const weights = eligibleSpecies.map((species) => {
     const match = distanceMatch(species.preferredDistance, distance);
     const weight = species.biteChance * species.rarity * match;
