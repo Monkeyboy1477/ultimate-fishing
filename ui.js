@@ -6,10 +6,18 @@ import { mapsForSpecies } from './maps.js';
 import { fishThumbnail } from './scene3d.js';
 import { isTouchDevice } from './touchControls.js';
 
-let storedCallbacks = null;
-let storedEconomy = null;
-let startScreenEl = null;
-let resultPanelEl = null;
+// Per-overlay state (callbacks/economy/current panel), keyed by menuOverlayElement so a 2P
+// session can call initMenus/showCatchResult twice (once per player's own overlay) without
+// one player's callbacks/economy clobbering the other's -- mirrors render.js's hudRegistry.
+const menuState = new WeakMap();
+function getMenuState(menuOverlayElement) {
+  let state = menuState.get(menuOverlayElement);
+  if (!state) {
+    state = { callbacks: null, economy: null, startScreenEl: null, resultPanelEl: null };
+    menuState.set(menuOverlayElement, state);
+  }
+  return state;
+}
 
 const MENU_SCREENS = [['Shop', showShop], ['Fish Book', showBook], ['Maps', showMaps]];
 
@@ -62,16 +70,16 @@ function buildStartScreen(menuOverlayElement, callbacks, options = {}) {
   const location = document.createElement('p');
   location.className = 'menu-panel-location';
   const refreshLocation = () => {
-    const current = storedEconomy && storedEconomy.getCurrentMap();
+    const current = getMenuState(menuOverlayElement).economy?.getCurrentMap();
     location.textContent = current ? `Fishing at: ${current.name}` : '';
   };
   refreshLocation();
 
   buttonRow.appendChild(startButton);
   if (showShopLinks) {
-    appendMenuButtons(buttonRow, menuOverlayElement, () => storedEconomy, () => {
+    appendMenuButtons(buttonRow, menuOverlayElement, () => getMenuState(menuOverlayElement).economy, () => {
       menuOverlayElement.innerHTML = '';
-      menuOverlayElement.appendChild(startScreenEl);
+      menuOverlayElement.appendChild(getMenuState(menuOverlayElement).startScreenEl);
       menuOverlayElement.classList.add('active');
       refreshLocation();
     });
@@ -86,6 +94,7 @@ function buildStartScreen(menuOverlayElement, callbacks, options = {}) {
 }
 
 function hideStartScreen(menuOverlayElement) {
+  const startScreenEl = getMenuState(menuOverlayElement).startScreenEl;
   if (startScreenEl && startScreenEl.parentNode === menuOverlayElement) {
     menuOverlayElement.removeChild(startScreenEl);
   }
@@ -93,12 +102,13 @@ function hideStartScreen(menuOverlayElement) {
 }
 
 export function initMenus(menuOverlayElement, callbacks, economy, options = {}) {
-  storedCallbacks = callbacks;
-  storedEconomy = economy;
+  const state = getMenuState(menuOverlayElement);
+  state.callbacks = callbacks;
+  state.economy = economy;
 
-  startScreenEl = buildStartScreen(menuOverlayElement, callbacks, options);
+  state.startScreenEl = buildStartScreen(menuOverlayElement, callbacks, options);
   menuOverlayElement.innerHTML = '';
-  menuOverlayElement.appendChild(startScreenEl);
+  menuOverlayElement.appendChild(state.startScreenEl);
   menuOverlayElement.classList.add('active');
 }
 
@@ -668,15 +678,16 @@ export function showCatchResult(menuOverlayElement, result, options = {}) {
   restartButton.addEventListener('click', () => {
     menuOverlayElement.classList.remove('active');
     menuOverlayElement.innerHTML = '';
-    resultPanelEl = null;
-    if (storedCallbacks && storedCallbacks.onRestart) {
-      storedCallbacks.onRestart();
+    const state = getMenuState(menuOverlayElement);
+    state.resultPanelEl = null;
+    if (state.callbacks && state.callbacks.onRestart) {
+      state.callbacks.onRestart();
     }
   });
   buttonRow.appendChild(restartButton);
 
   if (showShopLinks) {
-    appendMenuButtons(buttonRow, menuOverlayElement, () => storedEconomy, () => {
+    appendMenuButtons(buttonRow, menuOverlayElement, () => getMenuState(menuOverlayElement).economy, () => {
       menuOverlayElement.innerHTML = '';
       menuOverlayElement.appendChild(panel);
       menuOverlayElement.classList.add('active');
@@ -685,7 +696,7 @@ export function showCatchResult(menuOverlayElement, result, options = {}) {
 
   panel.appendChild(buttonRow);
 
-  resultPanelEl = panel;
+  getMenuState(menuOverlayElement).resultPanelEl = panel;
   menuOverlayElement.innerHTML = '';
   menuOverlayElement.appendChild(panel);
   menuOverlayElement.classList.add('active');

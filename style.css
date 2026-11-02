@@ -98,6 +98,19 @@ body {
 
 #menu-overlay.active, #hud-overlay.active { pointer-events: auto; }
 
+/* ---- 2P split-screen: #hud-overlay-p2/#menu-overlay-p2 double as Player 2's panes.
+   They stay hidden outside .split-screen so they never appear in single-player. ---- */
+#hud-overlay-p2, #menu-overlay-p2 { display: none; }
+
+#game-stage.split-screen #hud-overlay,
+#game-stage.split-screen #menu-overlay { right: 50%; left: 0; }
+#game-stage.split-screen #hud-overlay-p2,
+#game-stage.split-screen #menu-overlay-p2 { position: absolute; top: 0; bottom: 0; left: 50%; right: 0; pointer-events: none; }
+#game-stage.split-screen #hud-overlay-p2 { display: block; }
+#game-stage.split-screen #menu-overlay-p2 { display: flex; align-items: center; justify-content: center; }
+#game-stage.split-screen #menu-overlay-p2.active { pointer-events: auto; }
+#game-stage.split-screen::after { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: rgba(255,255,255,0.25); pointer-events: none; }
+
 /* ---- render.js: HUD overlay panels (appended, scoped to hud- prefix) ---- */
 .hud-panel {
   position: absolute;

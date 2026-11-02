@@ -6,26 +6,36 @@
 import { CastController, isLureHome, retrieveSpeedFor, stepRetrieve } from './casting3d.js';
 import { LineTensionSystem, fightTiming, stepFight } from './tension.js';
 import { FISH_SPECIES, trySpawnBite, HookedFish, eligibleSpeciesFor, getSellPrice, runTensionFor } from './fish.js';
-import { pointsForOffset } from './constants.js';
-import { initScene, renderScene3D, resizeScene, spawnSplash3D } from './scene3d.js';
+import { pointsForOffset, PLAYER_SEPARATION_M } from './constants.js';
+import { initScene, renderScene3D, resizeScene, spawnSplash3D, initSplitScene, renderSplitScene, resizeSplitScene } from './scene3d.js';
 import { renderHUD } from './render.js';
-import { initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleMenuButtons } from './ui.js';
+import {
+  initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleMenuButtons,
+  showModeSelect, showSharedMenu,
+} from './ui.js';
 import { createEconomy } from './economy.js';
 import { installAudio } from './audio.js';
 import { installTouchControls, isTouchDevice } from './touchControls.js';
 
 const canvas = document.getElementById('game-canvas');
+const gameStage = document.getElementById('game-stage');
 const hudOverlay = document.getElementById('hud-overlay');
 const menuOverlay = document.getElementById('menu-overlay');
+// Player 2's panes in 2P mode. Hidden/unused in single-player (see style.css).
+const hudOverlayP2 = document.getElementById('hud-overlay-p2');
+const menuOverlayP2 = document.getElementById('menu-overlay-p2');
 const topBar = {
   catchCount: document.getElementById('catch-count'),
   bestCatch: document.getElementById('best-catch'),
   currency: document.getElementById('currency-display'),
 };
 
+// The single-player economy/idle-buttons, built unconditionally exactly as before Task 9.
+// Inert in 2P mode: idleMenuButtons.hidden stays true because only setupSinglePlayer's own
+// render() ever flips it, and that render() never runs unless '1 Player' is chosen.
 const economy = createEconomy();
-const idleMenuButtons = createIdleMenuButtons(document.getElementById('game-stage'), menuOverlay, economy);
-installAudio(document.getElementById('game-stage'));
+const idleMenuButtons = createIdleMenuButtons(gameStage, menuOverlay, economy);
+installAudio(gameStage);
 
 const STATE = {
   MENU: 'menu',
@@ -316,8 +326,6 @@ function bindPlayerKeys(controller, { aimLeftKey, aimRightKey, actionKey }) {
   });
 }
 
-initScene(canvas);
-
 // ---- Input handling -------------------------------------------------------
 // First-person aiming: horizontal mouse position across the canvas sets the
 // lateral aim angle (0 = straight out over the water, positive = right,
@@ -327,62 +335,19 @@ initScene(canvas);
 const MAX_AIM_ANGLE_DEG = 40;
 const TOUCH_AIM_DEG_PER_S = 45;
 
-const singlePlayer = createPlayerController({ economy, originPoints: pointsForOffset(0), menuOverlayElement: menuOverlay });
-
-let castPointerId = null; // the mouse or finger holding the canvas to charge a cast
-
-function aimAngleFromEvent(e) {
-  const rect = canvas.getBoundingClientRect();
-  const fx = (e.clientX - rect.left) / rect.width; // 0..1 across the canvas
-  const clamped = Math.max(0, Math.min(1, fx));
-  return (clamped - 0.5) * 2 * MAX_AIM_ANGLE_DEG;
-}
-
-canvas.addEventListener('pointerdown', (e) => {
-  if (!singlePlayer.isMenuIdle()) return;
-  castPointerId = e.pointerId;
-  singlePlayer.setAimAngle(aimAngleFromEvent(e));
-  singlePlayer.startCast();
-});
-
-canvas.addEventListener('pointermove', (e) => {
-  if (e.pointerId !== castPointerId) return;
-  singlePlayer.setAimAngle(aimAngleFromEvent(e));
-});
-
-function endCanvasCast(e) {
-  if (e.pointerId !== castPointerId) return;
-  castPointerId = null;
-  singlePlayer.releaseCast();
-}
-window.addEventListener('pointerup', endCanvasCast);
-window.addEventListener('pointercancel', endCanvasCast);
-
-// Reel input: Space is tracked in every state, so a hold carries from retrieve into a fight.
-window.addEventListener('keydown', (e) => {
-  if (e.code !== 'Space') return;
-  e.preventDefault();
-  singlePlayer.startReel(!e.repeat);
-});
-window.addEventListener('keyup', (e) => {
-  if (e.code !== 'Space') return;
-  e.preventDefault();
-  singlePlayer.stopReel();
-});
-window.addEventListener('blur', () => singlePlayer.stopReel());
-
-const touchControls = installTouchControls(document.getElementById('game-stage'), {
-  onActionPress: () => singlePlayer.onActionPress(),
-  onActionRelease: () => singlePlayer.onActionRelease(),
-  onAim: (direction) => singlePlayer.onAim(direction),
-});
+// Set once mode selection resolves (Step 3); read by fitSceneToCanvas (Step 6) to pick
+// resizeScene vs resizeSplitScene, since both setup paths share the same ResizeObserver.
+let twoPlayer = false;
 
 // The stage fills the window (or the whole screen in full screen), so the 3D view follows its size.
 function fitSceneToCanvas() {
   const { clientWidth, clientHeight } = canvas;
-  if (clientWidth > 0 && clientHeight > 0) resizeScene(clientWidth, clientHeight);
-  const topBar = document.getElementById('top-bar');
-  if (topBar) document.documentElement.style.setProperty('--top-bar-height', `${topBar.offsetHeight}px`);
+  if (clientWidth > 0 && clientHeight > 0) {
+    if (twoPlayer) resizeSplitScene(clientWidth, clientHeight);
+    else resizeScene(clientWidth, clientHeight);
+  }
+  const topBarEl = document.getElementById('top-bar');
+  if (topBarEl) document.documentElement.style.setProperty('--top-bar-height', `${topBarEl.offsetHeight}px`);
 }
 new ResizeObserver(fitSceneToCanvas).observe(canvas);
 
@@ -399,50 +364,238 @@ window.addEventListener('pointerdown', (e) => {
 }, { capture: true });
 
 // ---- Main loop --------------------------------------------------------------
+// Shared by both modes: whichever setup function runs below installs its own per-frame
+// update+render as frameTick. Nothing renders until mode selection resolves and calls one.
 let lastTime = performance.now();
 let elapsedTime = 0;
+let frameTick = null;
 
 function tick(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
   elapsedTime += dt;
 
-  singlePlayer.update(dt);
-  render();
+  if (frameTick) frameTick(dt);
 
   requestAnimationFrame(tick);
 }
 
-function render() {
-  const frameState = singlePlayer.getFrameState();
-  renderScene3D(frameState);
+// ---------------------------------------------------------------------------
+// 1 Player — unchanged behavior from before Task 9, just moved behind the mode-select
+// callback so initScene (vs initSplitScene) only ever runs once per session.
+// ---------------------------------------------------------------------------
+function setupSinglePlayer() {
+  initScene(canvas);
 
-  renderHUD(hudOverlay, {
-    state: frameState.state,
-    chargePower: frameState.chargePower,
-    tensionState: frameState.tensionState,
-    hookedFish: frameState.hookedFish,
-    touch: document.body.classList.contains('touch'),
-    noFishForLure: eligibleSpeciesFor(economy.getEquippedStats('lure'), economy.getCurrentMap().id).length === 0
-      && !menuOverlay.classList.contains('active'),
+  const singlePlayer = createPlayerController({ economy, originPoints: pointsForOffset(0), menuOverlayElement: menuOverlay });
+
+  let castPointerId = null; // the mouse or finger holding the canvas to charge a cast
+
+  function aimAngleFromEvent(e) {
+    const rect = canvas.getBoundingClientRect();
+    const fx = (e.clientX - rect.left) / rect.width; // 0..1 across the canvas
+    const clamped = Math.max(0, Math.min(1, fx));
+    return (clamped - 0.5) * 2 * MAX_AIM_ANGLE_DEG;
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!singlePlayer.isMenuIdle()) return;
+    castPointerId = e.pointerId;
+    singlePlayer.setAimAngle(aimAngleFromEvent(e));
+    singlePlayer.startCast();
   });
 
-  const menuOpen = menuOverlay.classList.contains('active');
-  idleMenuButtons.hidden = frameState.state !== STATE.MENU || menuOpen;
-  touchControls.update({
-    label: singlePlayer.isMenuIdle() || frameState.state === STATE.CHARGING ? 'CAST' : 'REEL',
-    visible: !menuOpen,
-    aimEnabled: singlePlayer.isMenuIdle() || frameState.state === STATE.CHARGING,
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== castPointerId) return;
+    singlePlayer.setAimAngle(aimAngleFromEvent(e));
   });
 
-  updateHUDSummary(topBar, economy.getStats());
-  updateCurrencyDisplay(topBar.currency, economy.getCurrency());
+  function endCanvasCast(e) {
+    if (e.pointerId !== castPointerId) return;
+    castPointerId = null;
+    singlePlayer.releaseCast();
+  }
+  window.addEventListener('pointerup', endCanvasCast);
+  window.addEventListener('pointercancel', endCanvasCast);
+
+  // Reel input: Space is tracked in every state, so a hold carries from retrieve into a fight.
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space') return;
+    e.preventDefault();
+    singlePlayer.startReel(!e.repeat);
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code !== 'Space') return;
+    e.preventDefault();
+    singlePlayer.stopReel();
+  });
+  window.addEventListener('blur', () => singlePlayer.stopReel());
+
+  const touchControls = installTouchControls(gameStage, {
+    onActionPress: () => singlePlayer.onActionPress(),
+    onActionRelease: () => singlePlayer.onActionRelease(),
+    onAim: (direction) => singlePlayer.onAim(direction),
+  });
+
+  function render() {
+    const frameState = singlePlayer.getFrameState();
+    renderScene3D(frameState);
+
+    renderHUD(hudOverlay, {
+      state: frameState.state,
+      chargePower: frameState.chargePower,
+      tensionState: frameState.tensionState,
+      hookedFish: frameState.hookedFish,
+      touch: document.body.classList.contains('touch'),
+      noFishForLure: eligibleSpeciesFor(economy.getEquippedStats('lure'), economy.getCurrentMap().id).length === 0
+        && !menuOverlay.classList.contains('active'),
+    });
+
+    const menuOpen = menuOverlay.classList.contains('active');
+    idleMenuButtons.hidden = frameState.state !== STATE.MENU || menuOpen;
+    touchControls.update({
+      label: singlePlayer.isMenuIdle() || frameState.state === STATE.CHARGING ? 'CAST' : 'REEL',
+      visible: !menuOpen,
+      aimEnabled: singlePlayer.isMenuIdle() || frameState.state === STATE.CHARGING,
+    });
+
+    updateHUDSummary(topBar, economy.getStats());
+    updateCurrencyDisplay(topBar.currency, economy.getCurrency());
+  }
+
+  frameTick = (dt) => {
+    singlePlayer.update(dt);
+    render();
+  };
+
+  initMenus(menuOverlay, {
+    onStartCast: () => singlePlayer.resetToMenu(),
+    onRestart: () => singlePlayer.returnLureHome(),
+  }, economy);
+
+  fitSceneToCanvas();
 }
 
-initMenus(menuOverlay, {
-  onStartCast: () => singlePlayer.resetToMenu(),
-  onRestart: () => singlePlayer.returnLureHome(),
-}, economy);
+// ---------------------------------------------------------------------------
+// 2 Player — Team (one shared wallet) or Competitive (two separate wallets).
+// Split canvas via scene3d's two-camera path, two independent HUD panes, two independent
+// idle/result panels (no shop links — Shop/Fish Book/Maps only reachable via the shared
+// Escape menu), and the shared pause menu that freezes both players' simulation.
+// ---------------------------------------------------------------------------
+function setupTwoPlayer(economyMode) {
+  twoPlayer = true;
+  let pausedForMenu = false;
+
+  let economyP1;
+  let economyP2;
+  if (economyMode === 'team') {
+    const shared = createEconomy('-team');
+    economyP1 = shared;
+    economyP2 = shared;
+  } else {
+    economyP1 = createEconomy('-p1');
+    economyP2 = createEconomy('-p2');
+  }
+
+  gameStage.classList.add('split-screen');
+  initSplitScene(canvas);
+
+  const p1 = createPlayerController({
+    economy: economyP1,
+    originPoints: pointsForOffset(-PLAYER_SEPARATION_M / 2),
+    menuOverlayElement: menuOverlay,
+    showShopLinks: false,
+  });
+  const p2 = createPlayerController({
+    economy: economyP2,
+    originPoints: pointsForOffset(PLAYER_SEPARATION_M / 2),
+    menuOverlayElement: menuOverlayP2,
+    showShopLinks: false,
+  });
+
+  bindPlayerKeys(p1, { aimLeftKey: 'KeyA', aimRightKey: 'KeyD', actionKey: 'KeyS' });
+  bindPlayerKeys(p2, { aimLeftKey: 'ArrowLeft', aimRightKey: 'ArrowRight', actionKey: 'ArrowDown' });
+
+  initMenus(menuOverlay, {
+    onStartCast: () => p1.resetToMenu(),
+    onRestart: () => p1.returnLureHome(),
+  }, economyP1, { showShopLinks: false });
+
+  initMenus(menuOverlayP2, {
+    onStartCast: () => p2.resetToMenu(),
+    onRestart: () => p2.returnLureHome(),
+  }, economyP2, { showShopLinks: false });
+
+  function renderPlayerHUD(hudEl, menuEl, frameState, playerEconomy) {
+    renderHUD(hudEl, {
+      state: frameState.state,
+      chargePower: frameState.chargePower,
+      tensionState: frameState.tensionState,
+      hookedFish: frameState.hookedFish,
+      touch: document.body.classList.contains('touch'),
+      noFishForLure: eligibleSpeciesFor(playerEconomy.getEquippedStats('lure'), playerEconomy.getCurrentMap().id).length === 0
+        && !menuEl.classList.contains('active'),
+    });
+  }
+
+  function render() {
+    const frameP1 = p1.getFrameState();
+    const frameP2 = p2.getFrameState();
+    renderSplitScene([frameP1, frameP2]);
+
+    renderPlayerHUD(hudOverlay, menuOverlay, frameP1, economyP1);
+    renderPlayerHUD(hudOverlayP2, menuOverlayP2, frameP2, economyP2);
+
+    // The single shared top bar mirrors Player 1's wallet/catch count — in Team mode this is
+    // the shared wallet; in Competitive each player's own numbers live in their own Shop
+    // (reachable from the shared Escape menu's Player 1/Player 2 tabs), not in this bar.
+    updateHUDSummary(topBar, economyP1.getStats());
+    updateCurrencyDisplay(topBar.currency, economyP1.getCurrency());
+  }
+
+  // Satisfies Review Focus item 1: while the shared menu is open, neither player's state
+  // machine advances (no update(dt) calls at all), but renderSplitScene still runs every
+  // frame so the frozen scene stays visible behind the menu instead of going blank.
+  frameTick = (dt) => {
+    if (!pausedForMenu) {
+      p1.update(dt);
+      p2.update(dt);
+    }
+    render();
+  };
+
+  function closeSharedMenu() {
+    menuOverlay.classList.remove('active');
+    menuOverlay.innerHTML = '';
+    pausedForMenu = false;
+  }
+
+  function openSharedMenu() {
+    pausedForMenu = true;
+    const players = economyMode === 'team'
+      ? [{ label: 'Team', economy: economyP1 }]
+      : [{ label: 'Player 1', economy: economyP1 }, { label: 'Player 2', economy: economyP2 }];
+    showSharedMenu(menuOverlay, players, closeSharedMenu);
+  }
+
+  // Active only in 2P mode: this listener is only ever registered when setupTwoPlayer runs.
+  window.addEventListener('keydown', (e) => {
+    if (e.code !== 'Escape') return;
+    e.preventDefault();
+    if (pausedForMenu) closeSharedMenu();
+    else openSharedMenu();
+  });
+
+  fitSceneToCanvas();
+}
+
+showModeSelect(menuOverlay, (choice) => {
+  if (choice.mode === '1p') {
+    setupSinglePlayer();
+  } else {
+    setupTwoPlayer(choice.economyMode);
+  }
+});
 
 requestAnimationFrame((t) => {
   lastTime = t;
