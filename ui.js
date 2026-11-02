@@ -1,7 +1,8 @@
 // ui.js — start screen, catch-result overlay, and shop for Ultimate Fishing.
 // Owns #menu-overlay only. Does NOT touch #hud-overlay (render.js owns that).
 
-import { RARITY_TIER_NAMES } from './fish.js';
+import { FISH_SPECIES, RARITY_TIER_NAMES, canLureHook } from './fish.js';
+import { fishThumbnail } from './scene3d.js';
 import { isTouchDevice } from './touchControls.js';
 
 let storedCallbacks = null;
@@ -47,8 +48,21 @@ function buildStartScreen(menuOverlayElement, callbacks) {
     });
   });
 
+  const bookButton = document.createElement('button');
+  bookButton.type = 'button';
+  bookButton.className = 'menu-button menu-button-secondary';
+  bookButton.textContent = 'Fish Book';
+  bookButton.addEventListener('click', () => {
+    showBook(menuOverlayElement, storedEconomy, () => {
+      menuOverlayElement.innerHTML = '';
+      menuOverlayElement.appendChild(startScreenEl);
+      menuOverlayElement.classList.add('active');
+    });
+  });
+
   buttonRow.appendChild(startButton);
   buttonRow.appendChild(shopButton);
+  buttonRow.appendChild(bookButton);
 
   panel.appendChild(title);
   panel.appendChild(instructions);
@@ -83,7 +97,8 @@ let activeShopCategory = 'rod';
 function gearStatText(category, tier) {
   if (category === 'rod') return `Cast reach: ${tier.maxDistance} m`;
   if (category === 'line') return `Line strength: ${tier.breakThreshold.toFixed(1)}`;
-  return `Hooks up to: ${RARITY_TIER_NAMES[tier.maxRarityTier]} fish · Bite speed ×${tier.biteRateMultiplier.toFixed(1)}`;
+  const size = tier.minFishLb > 0 ? `Fish over ${tier.minFishLb} lb` : 'Any size of fish';
+  return `${size}, up to ${RARITY_TIER_NAMES[tier.maxRarityTier]} · Bite speed ×${tier.biteRateMultiplier.toFixed(1)}`;
 }
 
 function buildGearCard(category, tier, economy, onChange) {
@@ -202,22 +217,134 @@ export function showShop(menuOverlayElement, economy, onClose) {
   menuOverlayElement.classList.add('active');
 }
 
-// Shown while idle, since a free retrieve ends with no overlay to reach the shop from.
-export function createIdleShopButton(stageElement, menuOverlayElement, economy) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'menu-button menu-button-secondary idle-shop-button';
-  button.textContent = 'Shop';
-  button.hidden = true;
-  button.addEventListener('click', () => {
-    button.blur();
-    showShop(menuOverlayElement, economy, () => {
-      menuOverlayElement.innerHTML = '';
-      menuOverlayElement.classList.remove('active');
-    });
+// ---------------------------------------------------------------------------
+// Fish Book
+// ---------------------------------------------------------------------------
+
+function lureHintText(species, economy) {
+  const lures = economy.getGearTiers('lure').filter((lure) => canLureHook(lure, species));
+  const first = lures[0].name;
+  const last = lures[lures.length - 1].name;
+  return first === last ? `Bites on: ${first}` : `Bites on: ${first} to ${last}`;
+}
+
+function buildBookCard(species, economy, pendingPictures) {
+  const entry = economy.getCollectionEntry(species.id);
+
+  const card = document.createElement('div');
+  card.className = `book-card${entry ? '' : ' book-card-unknown'}`;
+
+  const picture = document.createElement('img');
+  picture.className = 'book-picture';
+  picture.alt = entry ? species.name : 'Fish not caught yet';
+  card.appendChild(picture);
+  pendingPictures.push({ picture, species });
+
+  const name = document.createElement('div');
+  name.className = 'gear-card-name';
+  name.textContent = entry ? species.name : '???';
+  card.appendChild(name);
+
+  const record = document.createElement('div');
+  record.className = 'gear-card-stat';
+  record.textContent = entry
+    ? `Caught ${entry.count} · Best ${entry.bestWeight.toFixed(1)} lb`
+    : 'Not caught yet';
+  card.appendChild(record);
+
+  const hint = document.createElement('div');
+  hint.className = 'gear-card-desc';
+  hint.textContent = lureHintText(species, economy);
+  card.appendChild(hint);
+
+  return card;
+}
+
+// One picture per frame, so opening the book never freezes the game.
+function drawPicturesInTurn(pendingPictures) {
+  const next = pendingPictures.shift();
+  if (!next) return;
+  next.picture.src = fishThumbnail(next.species);
+  requestAnimationFrame(() => drawPicturesInTurn(pendingPictures));
+}
+
+function buildBookPanel(economy, onClose) {
+  const panel = document.createElement('div');
+  panel.className = 'menu-panel menu-panel-shop';
+
+  const title = document.createElement('h2');
+  title.className = 'menu-panel-title';
+  title.textContent = 'Fish Book';
+  panel.appendChild(title);
+
+  const caughtCount = FISH_SPECIES.filter((species) => economy.getCollectionEntry(species.id)).length;
+  const progress = document.createElement('p');
+  progress.className = 'menu-panel-note';
+  progress.textContent = `${caughtCount} of ${FISH_SPECIES.length} species caught`;
+  panel.appendChild(progress);
+
+  const pendingPictures = [];
+  Object.keys(RARITY_TIER_NAMES).map(Number).forEach((rarityTier) => {
+    const section = document.createElement('section');
+    section.className = 'gear-section';
+
+    const heading = document.createElement('h3');
+    heading.className = 'gear-section-title';
+    heading.textContent = RARITY_TIER_NAMES[rarityTier];
+    section.appendChild(heading);
+
+    const row = document.createElement('div');
+    row.className = 'gear-card-row';
+    FISH_SPECIES
+      .filter((species) => species.rarityTier === rarityTier)
+      .sort((a, b) => a.maxWeight - b.maxWeight)
+      .forEach((species) => row.appendChild(buildBookCard(species, economy, pendingPictures)));
+    section.appendChild(row);
+    panel.appendChild(section);
   });
-  stageElement.appendChild(button);
-  return button;
+
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'menu-button';
+  closeButton.textContent = 'Close';
+  closeButton.addEventListener('click', onClose);
+  panel.appendChild(closeButton);
+
+  requestAnimationFrame(() => drawPicturesInTurn(pendingPictures));
+  return panel;
+}
+
+export function showBook(menuOverlayElement, economy, onClose) {
+  menuOverlayElement.innerHTML = '';
+  menuOverlayElement.appendChild(buildBookPanel(economy, onClose));
+  menuOverlayElement.classList.add('active');
+}
+
+// Shown while idle, since a free retrieve ends with no overlay to reach these from.
+export function createIdleMenuButtons(stageElement, menuOverlayElement, economy) {
+  const closeToGame = () => {
+    menuOverlayElement.innerHTML = '';
+    menuOverlayElement.classList.remove('active');
+  };
+
+  const group = document.createElement('div');
+  group.className = 'idle-menu-buttons';
+  group.hidden = true;
+
+  [['Fish Book', showBook], ['Shop', showShop]].forEach(([label, open]) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'menu-button menu-button-secondary';
+    button.textContent = label;
+    button.addEventListener('click', () => {
+      button.blur();
+      open(menuOverlayElement, economy, closeToGame);
+    });
+    group.appendChild(button);
+  });
+
+  stageElement.appendChild(group);
+  return group;
 }
 
 function describeResult(result) {
@@ -225,6 +352,7 @@ function describeResult(result) {
     const weightText = `${result.weight.toFixed(1)} lb`;
     const speciesName = result.species && result.species.name ? result.species.name : 'fish';
     const notes = [];
+    if (result.isNewSpecies) notes.push('New in your Fish Book!');
     if (result.isRecord) notes.push('New personal best!');
     if (typeof result.soldFor === 'number') notes.push(`Sold for $${Math.round(result.soldFor).toLocaleString('en-US')}`);
     return {
@@ -237,7 +365,8 @@ function describeResult(result) {
 
   const lostDetail = result.species ? `It was a ${result.species.name}.` : '';
   if (result.reason === 'line_snapped') {
-    return { heading: 'The line snapped!', detail: lostDetail, note: null, variant: 'fail' };
+    const note = result.lineTooWeak ? 'This fish is too strong for your line. Buy a stronger one in the Shop.' : null;
+    return { heading: 'The line snapped!', detail: lostDetail, note, variant: 'fail' };
   }
   if (result.reason === 'fish_escaped') {
     return { heading: 'It got away!', detail: lostDetail, note: null, variant: 'fail' };
@@ -308,6 +437,19 @@ export function showCatchResult(menuOverlayElement, result) {
     });
   });
   buttonRow.appendChild(shopButton);
+
+  const bookButton = document.createElement('button');
+  bookButton.type = 'button';
+  bookButton.className = 'menu-button menu-button-secondary';
+  bookButton.textContent = 'Fish Book';
+  bookButton.addEventListener('click', () => {
+    showBook(menuOverlayElement, storedEconomy, () => {
+      menuOverlayElement.innerHTML = '';
+      menuOverlayElement.appendChild(panel);
+      menuOverlayElement.classList.add('active');
+    });
+  });
+  buttonRow.appendChild(bookButton);
 
   panel.appendChild(buttonRow);
 

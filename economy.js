@@ -4,10 +4,13 @@
 // which feeds real stat overrides into casting3d.js (rod), tension.js (line), and fish.js
 // (lure) — this file only owns the data and the save-game state, not the physics/bite logic.
 
+import { FISH_SPECIES } from './fish.js';
+
 const SAVE_KEY = 'reel-realism-save-v1';
 
 // --- Gear tiers --------------------------------------------------------------
 // id 'rod_starter' / 'line_starter' / 'lure_basic' are free and owned from the start.
+// A lure's minFishLb is the smallest fish it draws, so bigger lures catch bigger fish.
 
 export const ROD_TIERS = [
   { id: 'rod_starter', name: 'Starter Rod', price: 0, maxDistance: 55, powerExponent: 1.5,
@@ -64,29 +67,29 @@ export const LINE_TIERS = [
 ];
 
 export const LURE_TIERS = [
-  { id: 'lure_basic', name: 'Basic Bait', price: 0, biteRateMultiplier: 1.0, maxRarityTier: 1,
-    visual: { kind: 'bobber' },
+  { id: 'lure_basic', name: 'Basic Bait', price: 0, biteRateMultiplier: 1.0, maxRarityTier: 1, minFishLb: 0,
+    visual: { kind: 'bobber', size: 1 },
     description: 'Plain bait. Only the common stuff will bother with it.' },
-  { id: 'lure_spinner', name: 'Spinner Lure', price: 80, biteRateMultiplier: 1.3, maxRarityTier: 2,
-    visual: { kind: 'spinner' },
-    description: 'Flash and vibration draw in faster bites from tougher fish.' },
-  { id: 'lure_jig', name: 'Premium Jig', price: 300, biteRateMultiplier: 1.6, maxRarityTier: 3,
-    visual: { kind: 'jig' },
+  { id: 'lure_spinner', name: 'Spinner Lure', price: 80, biteRateMultiplier: 1.3, maxRarityTier: 2, minFishLb: 2,
+    visual: { kind: 'spinner', size: 1.15 },
+    description: 'Flash and vibration draw in faster bites from tougher fish. Too big for the tiniest ones.' },
+  { id: 'lure_jig', name: 'Premium Jig', price: 300, biteRateMultiplier: 1.6, maxRarityTier: 3, minFishLb: 5,
+    visual: { kind: 'jig', size: 1.3 },
     description: 'Hand-tuned action. Gets noticed by serious, hard-fighting fish.' },
-  { id: 'lure_legendary', name: 'Legendary Lure', price: 1000, biteRateMultiplier: 2.0, maxRarityTier: 4,
-    visual: { kind: 'spoon' },
+  { id: 'lure_legendary', name: 'Legendary Lure', price: 1000, biteRateMultiplier: 2.0, maxRarityTier: 4, minFishLb: 15,
+    visual: { kind: 'spoon', size: 1.5 },
     description: 'A polished spoon that tempts trophy fish. The true giants still ignore it.' },
-  { id: 'lure_crankbait', name: 'Deep Crankbait', price: 2500, biteRateMultiplier: 2.2, maxRarityTier: 4,
-    visual: { kind: 'crankbait' },
+  { id: 'lure_crankbait', name: 'Deep Crankbait', price: 2500, biteRateMultiplier: 2.2, maxRarityTier: 4, minFishLb: 30,
+    visual: { kind: 'crankbait', size: 1.7 },
     description: 'Dives fast and rattles hard, so trophy fish strike sooner.' },
-  { id: 'lure_popper', name: 'Bluewater Popper', price: 6000, biteRateMultiplier: 2.4, maxRarityTier: 5,
-    visual: { kind: 'popper' },
+  { id: 'lure_popper', name: 'Bluewater Popper', price: 6000, biteRateMultiplier: 2.4, maxRarityTier: 5, minFishLb: 60,
+    visual: { kind: 'popper', size: 1.9 },
     description: 'Throws spray across the surface. First lure that draws legendary fish.' },
-  { id: 'lure_squid', name: 'Giant Squid Rig', price: 15000, biteRateMultiplier: 2.6, maxRarityTier: 5,
-    visual: { kind: 'squid' },
-    description: 'A big, trailing squid skirt that legendary fish strike quickly.' },
-  { id: 'lure_livebait', name: 'Monster Live Bait', price: 40000, biteRateMultiplier: 3.0, maxRarityTier: 6,
-    visual: { kind: 'livebait' },
+  { id: 'lure_squid', name: 'Giant Squid Rig', price: 15000, biteRateMultiplier: 2.6, maxRarityTier: 5, minFishLb: 100,
+    visual: { kind: 'squid', size: 2.2 },
+    description: 'A big, trailing squid skirt that only big fish will try to swallow.' },
+  { id: 'lure_livebait', name: 'Monster Live Bait', price: 40000, biteRateMultiplier: 3.0, maxRarityTier: 6, minFishLb: 100,
+    visual: { kind: 'livebait', size: 2.5 },
     description: 'The only lure a mythic fish will take, and even then they rarely bite.' },
 ];
 
@@ -107,7 +110,14 @@ function defaultState() {
       lure: ['lure_basic'],
     },
     stats: { catchCount: 0, bestWeight: 0, bestSpecies: null, totalEarnings: 0 },
+    collection: {}, // speciesId -> { count, bestWeight }, shown in the Fish Book
   };
+}
+
+// Saves from before the Fish Book only recorded the single best catch, so that's all it can show.
+function seedCollection(stats) {
+  const best = FISH_SPECIES.find((species) => species.name === stats.bestSpecies);
+  return best ? { [best.id]: { count: 1, bestWeight: stats.bestWeight } } : {};
 }
 
 function loadState() {
@@ -127,6 +137,7 @@ function loadState() {
         lure: Array.isArray(parsed.owned?.lure) ? parsed.owned.lure : base.owned.lure,
       },
       stats: { ...base.stats, ...parsed.stats },
+      collection: parsed.collection ?? seedCollection({ ...base.stats, ...parsed.stats }),
     };
   } catch {
     return defaultState();
@@ -151,6 +162,10 @@ export function createEconomy() {
 
     getStats() {
       return state.stats;
+    },
+
+    getCollectionEntry(speciesId) {
+      return state.collection[speciesId] ?? null;
     },
 
     getGearTiers(category) {
@@ -209,8 +224,14 @@ export function createEconomy() {
         state.stats.bestWeight = weight;
         state.stats.bestSpecies = species.name;
       }
+      const entry = state.collection[species.id];
+      const isNewSpecies = !entry;
+      state.collection[species.id] = {
+        count: (entry?.count ?? 0) + 1,
+        bestWeight: Math.max(entry?.bestWeight ?? 0, weight),
+      };
       persist();
-      return { earned: sellPrice, isRecord };
+      return { earned: sellPrice, isRecord, isNewSpecies };
     },
   };
 }

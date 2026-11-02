@@ -23,6 +23,7 @@ const CLOCK_SAFETY_MARGIN_S = 1;
 const MIN_FIGHT_S = 6;
 const TOUGHNESS_FIGHT_S = 12;    // added for the toughest fish (staminaMax 200)
 const DISTANCE_FIGHT_S = 6;      // added for a fish hooked at the longest cast (130m)
+const GIANT_FIGHT_S = 5;         // added for legendary and mythic fish
 
 // budgetS is the hard limit that keeps the whole catch within CATCH_TIME_LIMIT_S of the cast's
 // release. targetS is how long this fight should take when played well: longer for tougher fish
@@ -32,7 +33,8 @@ export function fightTiming(species, lureDistanceM, elapsedSinceReleaseS) {
   const targetS =
     MIN_FIGHT_S +
     TOUGHNESS_FIGHT_S * Math.min(1, species.staminaMax / 200) +
-    DISTANCE_FIGHT_S * Math.min(1, lureDistanceM / 130);
+    DISTANCE_FIGHT_S * Math.min(1, lureDistanceM / 130) +
+    (species.rarityTier >= 5 ? GIANT_FIGHT_S : 0);
   return { budgetS, targetS: Math.min(budgetS, targetS) };
 }
 
@@ -40,7 +42,7 @@ export function fightTiming(species, lureDistanceM, elapsedSinceReleaseS) {
 // 'landed'.
 export function stepFight(fish, tensionSystem, tensionState, dt, reelInput) {
   const fishUpdate = fish.update(dt, tensionState, reelInput);
-  const next = tensionSystem.update(dt, fishUpdate.pullVector, reelInput);
+  const next = tensionSystem.update(dt, fishUpdate.pullVector, reelInput, fishUpdate.runTension);
   let outcome = null;
   if (next.broken) outcome = 'line_snapped';
   else if (fishUpdate.escaped) outcome = 'fish_escaped';
@@ -65,7 +67,8 @@ export class LineTensionSystem {
     this.landed = false;
   }
 
-  update(dt, fishPullVector, reelInput) {
+  // runTension: the load from a giant's run, which holds even with the reel stopped.
+  update(dt, fishPullVector, reelInput, runTension = 0) {
     // Once the fight is resolved (line snapped or fish landed), freeze state.
     if (this.broken || this.landed) {
       return this._state();
@@ -89,15 +92,16 @@ export class LineTensionSystem {
     // Baseline load comes just from the fish pulling against a hooked line; the conflict term
     // only matters when BOTH reeling and a strong fish pull happen at once — that's the spike
     // the player has to learn to avoid by easing off when the fish surges.
-    const targetTension = pullMag * PASSIVE_LOAD_GAIN + reel * pullMag * CONFLICT_GAIN;
+    const targetTension = Math.max(pullMag * PASSIVE_LOAD_GAIN, runTension) + reel * pullMag * CONFLICT_GAIN;
 
     const springForce = (targetTension - this.tension) * SPRING_STIFFNESS;
     const dampingForce = -this._tensionVelocity * SPRING_DAMPING;
     this._tensionVelocity += (springForce + dampingForce) * dt;
     this.tension += this._tensionVelocity * dt;
 
-    // Letting off the reel bleeds extra tension out of the line (slack relieves strain).
-    if (reel === 0) {
+    // Letting off the reel bleeds extra tension out of the line (slack relieves strain), except
+    // during a giant's run, which keeps the line loaded so timing can't beat a weak line.
+    if (reel === 0 && runTension === 0) {
       this.tension -= IDLE_TENSION_BLEED * dt;
     }
     this.tension = Math.max(0, this.tension);

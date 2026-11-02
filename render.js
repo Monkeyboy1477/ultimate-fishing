@@ -466,6 +466,10 @@ function buildHud(hudElement) {
   fightPanel.appendChild(staminaTrack);
   fightPanel.appendChild(distanceRow);
 
+  const runWarning = document.createElement('div');
+  runWarning.className = 'hud-panel hud-run-warning';
+  runWarning.textContent = 'BIG RUN! LET GO OF THE REEL!';
+
   const reelHint = document.createElement('div');
   reelHint.className = 'hud-panel hud-reel-hint';
   reelHint.textContent = 'Hold Space to reel in';
@@ -473,8 +477,9 @@ function buildHud(hudElement) {
   hudElement.appendChild(powerPanel);
   hudElement.appendChild(fightPanel);
   hudElement.appendChild(reelHint);
+  hudElement.appendChild(runWarning);
 
-  const refs = { powerPanel, powerFill, fightPanel, speciesName, tensionFill, staminaFill, distanceRow, reelHint };
+  const refs = { powerPanel, powerFill, fightPanel, speciesName, tensionFill, staminaFill, distanceRow, reelHint, runWarning };
   hudRegistry.set(hudElement, refs);
   return refs;
 }
@@ -489,6 +494,7 @@ export function renderHUD(hudElement, state) {
   refs.powerPanel.classList.toggle('visible', isCharging);
   refs.fightPanel.classList.toggle('visible', isFighting);
   refs.reelHint.classList.toggle('visible', state.state === 'waiting_bite');
+  refs.runWarning.classList.toggle('visible', isFighting && Boolean(state.hookedFish?.runIsNear()));
   refs.reelHint.textContent = state.touch ? 'Hold REEL to reel in' : 'Hold Space to reel in';
 
   if (isCharging) {

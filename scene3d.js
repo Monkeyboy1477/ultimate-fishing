@@ -304,10 +304,11 @@ function buildLine() {
   scene.add(line);
 }
 
-function setLureKind(kind) {
+function setLureKind(kind, size = 1) {
   if (kind === activeLureKind) return;
   if (activeLure) lurePivot.remove(activeLure.group);
   activeLure = createLureModel(kind);
+  activeLure.group.scale.setScalar(size);
   activeLureKind = kind;
   lurePivot.add(activeLure.group);
 }
@@ -467,6 +468,64 @@ export function resizeScene(width, height) {
     ? BASE_FOV_DEG
     : radToDeg(2 * Math.atan(Math.tan(degToRad(BASE_FOV_DEG / 2)) * (BASE_ASPECT / aspect)));
   camera.updateProjectionMatrix();
+}
+
+// ---------------------------------------------------------------------------
+// Fish Book pictures
+// ---------------------------------------------------------------------------
+
+const THUMBNAIL_WIDTH = 240;
+const THUMBNAIL_HEIGHT = 120;
+const THUMBNAIL_MARGIN = 1.08;
+const thumbnailCache = new Map();
+let thumbnailRig = null;
+
+function getThumbnailRig() {
+  if (thumbnailRig) return thumbnailRig;
+  const thumbRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  thumbRenderer.setSize(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, false);
+  thumbRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  const thumbScene = new THREE.Scene();
+  thumbScene.add(new THREE.HemisphereLight(0xffffff, 0x6f7f88, 2.4));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+  sun.position.set(1, 2, 3);
+  thumbScene.add(sun);
+
+  const thumbCamera = new THREE.OrthographicCamera(-1, 1, 0.5, -0.5, 0.01, 100);
+  thumbnailRig = { renderer: thumbRenderer, scene: thumbScene, camera: thumbCamera, box: new THREE.Box3() };
+  return thumbnailRig;
+}
+
+// A side-on picture of a species as an image URL, drawn once and then cached.
+export function fishThumbnail(species) {
+  if (thumbnailCache.has(species.id)) return thumbnailCache.get(species.id);
+
+  const rig = getThumbnailRig();
+  const model = createFishModel(species.id, speciesColorHex(species));
+  const previousParent = model.group.parent;
+  rig.scene.add(model.group);
+  model.setSwim(0, 0);
+
+  rig.box.setFromObject(model.group);
+  const center = rig.box.getCenter(v1);
+  const size = rig.box.getSize(v2);
+  const halfWidth = Math.max(size.x, size.y * (THUMBNAIL_WIDTH / THUMBNAIL_HEIGHT)) * 0.5 * THUMBNAIL_MARGIN;
+  rig.camera.left = -halfWidth;
+  rig.camera.right = halfWidth;
+  rig.camera.top = halfWidth * (THUMBNAIL_HEIGHT / THUMBNAIL_WIDTH);
+  rig.camera.bottom = -rig.camera.top;
+  rig.camera.position.set(center.x, center.y, center.z + size.z + 10);
+  rig.camera.lookAt(center);
+  rig.camera.updateProjectionMatrix();
+
+  rig.renderer.render(rig.scene, rig.camera);
+  const url = rig.renderer.domElement.toDataURL('image/png');
+
+  rig.scene.remove(model.group);
+  if (previousParent) previousParent.add(model.group);
+  thumbnailCache.set(species.id, url);
+  return url;
 }
 
 // ---------------------------------------------------------------------------
@@ -935,7 +994,7 @@ function updateTrophy(dt, time, hookedFish) {
 }
 
 function applyGear(gear) {
-  setLureKind(gear && gear.lure && gear.lure.kind ? gear.lure.kind : 'bobber');
+  setLureKind(gear && gear.lure && gear.lure.kind ? gear.lure.kind : 'bobber', gear?.lure?.size);
   const rodGear = gear && gear.rod;
   const lineHex = gear && gear.line ? gear.line.color : undefined;
   const key = `${rodGear ? rodGear.blankColor : ''}|${rodGear ? rodGear.gripColor : ''}|${rodGear ? rodGear.accentColor : ''}|${lineHex}`;

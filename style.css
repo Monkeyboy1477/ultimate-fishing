@@ -385,14 +385,52 @@ body {
   font-size: 0.85rem;
 }
 
-.idle-shop-button {
+.idle-menu-buttons {
   position: absolute;
   top: 12px;
   right: 12px;
-  background: rgba(15, 32, 39, 0.75);
+  display: flex;
+  gap: 8px;
 }
 
-.idle-shop-button[hidden] { display: none; }
+.idle-menu-buttons .menu-button { background: rgba(15, 32, 39, 0.75); }
+.idle-menu-buttons[hidden] { display: none; }
+
+/* --- ui.js: Fish Book --- */
+.book-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--color-ui-accent);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.book-picture {
+  width: 100%;
+  aspect-ratio: 2;
+  object-fit: contain;
+}
+
+.book-card-unknown { border-color: rgba(255, 255, 255, 0.12); }
+.book-card-unknown .book-picture { filter: brightness(0) opacity(0.55); }
+.book-card-unknown .gear-card-name { color: #7f97a3; }
+.book-card-unknown .gear-card-stat { color: #7f97a3; }
+
+/* --- render.js: warning during a giant's run --- */
+.hud-run-warning {
+  left: 50%;
+  top: 40%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 8px 16px;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #fff;
+  background: rgba(230, 57, 70, 0.92);
+  border-color: #fff;
+}
 
 /* --- touchControls.js: on-screen buttons, hidden until body.touch --- */
 #touch-controls { display: none; }

@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BITE_DEADLINE_S, CATCH_TIME_LIMIT_S, MAX_RETRIEVE_S } from '../constants.js';
 import { CastController, isLureHome, retrieveSpeedFor, stepRetrieve } from '../casting3d.js';
-import { FISH_SPECIES, HookedFish, getSellPrice, trySpawnBite } from '../fish.js';
+import { FISH_SPECIES, HookedFish, canLureHook, getSellPrice, trySpawnBite } from '../fish.js';
 import { LineTensionSystem, fightTiming, stepFight } from '../tension.js';
-import { LINE_TIERS, LURE_TIERS, ROD_TIERS } from '../economy.js';
+import { LINE_TIERS, LURE_TIERS, ROD_TIERS, createEconomy } from '../economy.js';
 
 const DT = 1 / 60;
 const TRIALS = 200;
@@ -40,14 +40,14 @@ function simulateCatch(species, line, lure, rod, policy) {
   const cast = releaseCast(rod, Math.random(), (Math.random() - 0.5) * 80);
   let clock = cast.flightDuration + waitForBite(cast, lure);
   const timing = fightTiming(species, cast.landingDistance, clock);
-  const fish = new HookedFish(species, timing.budgetS);
+  const fish = new HookedFish(species, timing.budgetS, lure.minFishLb);
   const system = new LineTensionSystem(line.breakThreshold, timing);
   let state = system.update(0, { x: 0, y: 0 }, 0);
   for (;;) {
     const step = stepFight(fish, system, state, DT, policy(state));
     state = step.tensionState;
     clock += DT;
-    if (step.outcome) return { outcome: step.outcome, clock };
+    if (step.outcome) return { outcome: step.outcome, clock, weight: fish.weight };
     assert.ok(clock < 120, 'fight never resolved');
   }
 }
@@ -64,14 +64,15 @@ function landingRate(species, line, lure, rod, policy, trials = TRIALS) {
   return landed / trials;
 }
 
-// Legendary fish need the Kevlar line onward; mythic fish need the top line.
+// Kevlar is the bare minimum for legendary fish and Titanium for mythic ones. A typical player
+// is comfortable one line above that minimum.
 function matchingGear(species) {
-  const lure = LURE_TIERS.find((tier) => tier.maxRarityTier >= species.rarityTier);
+  const lure = LURE_TIERS.find((tier) => canLureHook(tier, species));
   if (species.rarityTier <= 4) {
     const index = species.rarityTier - 1;
     return [LINE_TIERS[index], lure, ROD_TIERS[index]];
   }
-  if (species.rarityTier === 5) return [LINE_TIERS[5], lure, ROD_TIERS[5]];
+  if (species.rarityTier === 5) return [LINE_TIERS[6], lure, ROD_TIERS[5]];
   return [LINE_TIERS[LINE_TIERS.length - 1], lure, ROD_TIERS[ROD_TIERS.length - 1]];
 }
 
@@ -109,9 +110,10 @@ test('a sensible player with matching gear usually lands every species', () => {
   });
   console.table(rows);
   for (const row of rows) {
-    const floor = row.tier >= 5 ? 0.6 : 0.75;
-    assert.ok(row.easeOff >= 0.8, `${row.species} landed only ${row.easeOff}`);
-    assert.ok(row.delayed250ms >= floor, `${row.species} landed only ${row.delayed250ms} with a human delay`);
+    const giant = row.tier >= 5;
+    assert.ok(row.easeOff >= (giant ? 0.6 : 0.8), `${row.species} landed only ${row.easeOff}`);
+    assert.ok(row.delayed250ms >= (giant ? 0.2 : 0.75), `${row.species} landed only ${row.delayed250ms} with a human delay`);
+    if (giant) assert.ok(row.delayed250ms <= 0.85, `${row.species} is too easy at ${row.delayed250ms}`);
   }
 });
 
@@ -129,7 +131,53 @@ test('mythic fish snap the starter line and everything below the top two lines',
   console.table(rows);
 });
 
-test('rarity with the best lure: legendary about 5% of bites, mythic 1-2%', () => {
+test('even perfect timing cannot land a giant on a line that is too weak', () => {
+  const required = { 5: 'line_kevlar', 6: 'line_titanium' };
+  for (const species of FISH_SPECIES.filter((fish) => fish.rarityTier >= 5)) {
+    const requiredIndex = LINE_TIERS.findIndex((line) => line.id === required[species.rarityTier]);
+    for (const line of LINE_TIERS.slice(0, requiredIndex)) {
+      const rate = landingRate(species, line, BEST_LURE, BEST_ROD, easeOff, 80);
+      assert.equal(rate, 0, `${species.id} landed ${rate} on ${line.id}`);
+    }
+    const rate = landingRate(species, LINE_TIERS[requiredIndex], BEST_LURE, BEST_ROD, easeOff, 80);
+    assert.ok(rate >= 0.3, `${species.id} landed only ${rate} on ${LINE_TIERS[requiredIndex].id}`);
+  }
+});
+
+test('bigger lures only catch bigger fish', () => {
+  for (const lure of LURE_TIERS) {
+    for (let i = 0; i < 1500; i += 1) {
+      const cast = { landingDistance: 7 + Math.random() * 173 };
+      const species = trySpawnBite(cast, BITE_DEADLINE_S, DT, lure);
+      const fish = new HookedFish(species, 20, lure.minFishLb);
+      assert.ok(fish.weight >= lure.minFishLb, `${lure.id} hooked a ${fish.weight} lb ${species.id}`);
+      assert.ok(fish.weight <= species.maxWeight);
+    }
+  }
+  const floors = LURE_TIERS.map((lure) => lure.minFishLb);
+  assert.deepEqual(floors, [...floors].sort((a, b) => a - b));
+  assert.equal(LURE_TIERS[0].minFishLb, 0, 'the free bait still catches small fish');
+  const bluegill = FISH_SPECIES.find((species) => species.id === 'bluegill');
+  assert.equal(canLureHook(BEST_LURE, bluegill), false);
+});
+
+test('every species in the Fish Book can be caught with some lure', () => {
+  for (const species of FISH_SPECIES) {
+    assert.ok(LURE_TIERS.some((lure) => canLureHook(lure, species)), species.id);
+  }
+});
+
+test('the Fish Book records each species, its count and its best weight', () => {
+  const economy = createEconomy();
+  const [first, second] = FISH_SPECIES;
+  assert.equal(economy.getCollectionEntry(first.id), null);
+  assert.equal(economy.recordCatch(first, 1, 5).isNewSpecies, true);
+  assert.equal(economy.recordCatch(first, 0.5, 5).isNewSpecies, false);
+  assert.deepEqual(economy.getCollectionEntry(first.id), { count: 2, bestWeight: 1 });
+  assert.equal(economy.getCollectionEntry(second.id), null);
+});
+
+test('rarity with the best lure: legendary is uncommon and mythic rarest', () => {
   const counts = {};
   const samples = 200000;
   for (let i = 0; i < samples; i += 1) {
@@ -139,9 +187,9 @@ test('rarity with the best lure: legendary about 5% of bites, mythic 1-2%', () =
   }
   const share = (tier) => (counts[tier] || 0) / samples;
   console.log('bite share by tier', Object.fromEntries(Object.keys(counts).map((tier) => [tier, share(tier).toFixed(3)])));
-  assert.ok(share(5) >= 0.035 && share(5) <= 0.065, `legendary share ${share(5)}`);
-  assert.ok(share(6) >= 0.01 && share(6) <= 0.02, `mythic share ${share(6)}`);
-  assert.ok(share(6) < share(5) && share(5) < share(4) && share(4) < share(3), 'rarer tiers bite less often');
+  assert.ok(share(5) >= 0.08 && share(5) <= 0.2, `legendary share ${share(5)}`);
+  assert.ok(share(6) >= 0.01 && share(6) <= 0.05, `mythic share ${share(6)}`);
+  assert.ok(share(6) < share(5) && share(5) < share(4), 'rarer tiers bite less often');
 });
 
 test('only the top lure attracts mythic fish, and legendary fish need a big-game lure', () => {
@@ -194,7 +242,7 @@ function playThrough() {
     const result = simulateCatch(species, LINE_TIERS[owned.line], lure, rod, delayedEaseOff());
     attempts += 1;
     seconds += result.clock + 4;
-    if (result.outcome === 'landed') cash += getSellPrice(species, randomWeight(species));
+    if (result.outcome === 'landed') cash += getSellPrice(species, result.weight);
     while (cash >= next.tier.price) {
       cash -= next.tier.price;
       owned[next.category] += 1;
@@ -204,10 +252,6 @@ function playThrough() {
     }
     assert.ok(seconds < 24 * 3600, 'progression stalled');
   }
-}
-
-function randomWeight(species) {
-  return species.minWeight + Math.random() * (species.maxWeight - species.minWeight);
 }
 
 test('pacing: first upgrade in 5-8 catches, later tiers in a steady grind, top gear in a few hours', () => {

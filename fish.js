@@ -122,7 +122,7 @@ export const FISH_SPECIES = [
     rarityTier: 3,
     color: 0x5a6b45,
     sellBasePrice: 12,
-    sellPricePerPound: 14,
+    sellPricePerPound: 7,
   },
   {
     id: 'striped_bass',
@@ -138,7 +138,7 @@ export const FISH_SPECIES = [
     rarityTier: 3,
     color: 0x8a95a0,
     sellBasePrice: 11,
-    sellPricePerPound: 13,
+    sellPricePerPound: 6,
   },
   {
     id: 'flathead_catfish',
@@ -154,7 +154,7 @@ export const FISH_SPECIES = [
     rarityTier: 3,
     color: 0x7a6a3f,
     sellBasePrice: 14,
-    sellPricePerPound: 16,
+    sellPricePerPound: 7,
   },
   // -- rarityTier 4: legendary trophy fish ------------------------------------
   {
@@ -171,7 +171,7 @@ export const FISH_SPECIES = [
     rarityTier: 4,
     color: 0x5b6b78,
     sellBasePrice: 30,
-    sellPricePerPound: 45,
+    sellPricePerPound: 10,
   },
   {
     id: 'lake_sturgeon',
@@ -187,7 +187,7 @@ export const FISH_SPECIES = [
     rarityTier: 4,
     color: 0x6e6a5e,
     sellBasePrice: 35,
-    sellPricePerPound: 55,
+    sellPricePerPound: 12,
   },
   {
     id: 'alligator_gar',
@@ -203,7 +203,7 @@ export const FISH_SPECIES = [
     rarityTier: 4,
     color: 0x4a5a3a,
     sellBasePrice: 40,
-    sellPricePerPound: 65,
+    sellPricePerPound: 13,
   },
   {
     id: 'paddlefish',
@@ -219,7 +219,7 @@ export const FISH_SPECIES = [
     rarityTier: 4,
     color: 0x7d8a8f,
     sellBasePrice: 28,
-    sellPricePerPound: 40,
+    sellPricePerPound: 9,
   },
   // -- More everyday and rare fish --------------------------------------------
   {
@@ -284,7 +284,7 @@ export const FISH_SPECIES = [
     rarityTier: 3,
     color: 0x9fb0b8,
     sellBasePrice: 12,
-    sellPricePerPound: 15,
+    sellPricePerPound: 7,
   },
   // -- rarityTier 5: legendary giants that need big-game gear -----------------
   {
@@ -297,7 +297,7 @@ export const FISH_SPECIES = [
     pullPattern: 'surge',
     preferredDistance: 0.85,
     rarity: 0.15,
-    biteChance: 0.16,
+    biteChance: 0.03,
     rarityTier: 5,
     color: 0x6f7c85,
     sellBasePrice: 1500,
@@ -313,7 +313,7 @@ export const FISH_SPECIES = [
     pullPattern: 'diving',
     preferredDistance: 0.9,
     rarity: 0.15,
-    biteChance: 0.15,
+    biteChance: 0.03,
     rarityTier: 5,
     color: 0x1f3a66,
     sellBasePrice: 800,
@@ -329,7 +329,7 @@ export const FISH_SPECIES = [
     pullPattern: 'surge',
     preferredDistance: 0.95,
     rarity: 0.15,
-    biteChance: 0.15,
+    biteChance: 0.03,
     rarityTier: 5,
     color: 0x3b4c63,
     sellBasePrice: 800,
@@ -346,7 +346,7 @@ export const FISH_SPECIES = [
     pullPattern: 'steady',
     preferredDistance: 0.92,
     rarity: 0.05,
-    biteChance: 0.12,
+    biteChance: 0.013,
     rarityTier: 6,
     color: 0x5e6a6e,
     sellBasePrice: 5000,
@@ -362,7 +362,7 @@ export const FISH_SPECIES = [
     pullPattern: 'surge',
     preferredDistance: 0.97,
     rarity: 0.05,
-    biteChance: 0.12,
+    biteChance: 0.013,
     rarityTier: 6,
     color: 0x1b4f8f,
     sellBasePrice: 6000,
@@ -378,7 +378,7 @@ export const FISH_SPECIES = [
     pullPattern: 'erratic',
     preferredDistance: 1.0,
     rarity: 0.05,
-    biteChance: 0.12,
+    biteChance: 0.013,
     rarityTier: 6,
     color: 0x7f8b92,
     sellBasePrice: 8000,
@@ -441,19 +441,21 @@ function distanceMatch(preferredDistance, distance) {
 // Default lure: the basic/no-upgrade bait. Only attracts rarityTier-1 fish,
 // at the baseline bite rate. A caller that hasn't wired up the lure/shop
 // system yet (or explicitly passes null) gets this behavior for free.
-const DEFAULT_LURE_STATS = { biteRateMultiplier: 1, maxRarityTier: 1 };
+const DEFAULT_LURE_STATS = { biteRateMultiplier: 1, maxRarityTier: 1, minFishLb: 0 };
+
+// A lure only draws fish that suit its size: nothing rarer than its ceiling, and nothing that
+// can't reach its minimum weight, so a big expensive lure stops catching little fish.
+export function canLureHook(lure, species) {
+  return species.rarityTier <= lure.maxRarityTier && species.maxWeight > (lure.minFishLb ?? 0);
+}
 
 export function trySpawnBite(cast, waitElapsed, dt, lureStats) {
   if (dt <= 0) return null;
 
   const lure = lureStats || DEFAULT_LURE_STATS;
-  const maxRarityTier = lure.maxRarityTier ?? DEFAULT_LURE_STATS.maxRarityTier;
   const biteRateMultiplier = lure.biteRateMultiplier ?? DEFAULT_LURE_STATS.biteRateMultiplier;
 
-  // Better lures unlock the ability to hook rarer/bigger fish at all, not
-  // just bite faster — species above the lure's rarity ceiling are excluded
-  // entirely rather than just weighted down.
-  const eligibleSpecies = FISH_SPECIES.filter((species) => species.rarityTier <= maxRarityTier);
+  const eligibleSpecies = FISH_SPECIES.filter((species) => canLureHook(lure, species));
   if (eligibleSpecies.length === 0) return null;
 
   if (waitElapsed < MIN_BITE_WAIT_S) return null;
@@ -496,6 +498,20 @@ const REGEN_RATE = 1.6; // stamina units/sec recovered while unpressured
 
 // A fish works itself free after this many consecutive seconds with no reeling.
 const REEL_IDLE_ESCAPE_S = 7;
+const GIANT_REEL_IDLE_ESCAPE_S = 4; // giants need steady pressure, so they shake loose sooner
+
+// Legendary and mythic fish make hard runs that load the line even with the reel stopped, so
+// perfect timing can't save a line that's too weak. Each value sits just above the strongest
+// line that fails: legendary needs the Kevlar line, mythic needs the Titanium line.
+const GIANT_RUN_TENSION = { 5: 3.7, 6: 4.5 };
+const RUN_DURATION_S = 2;
+
+const RUN_END_CLEARANCE_S = 3;
+const RUN_WARNING_S = 0.7;
+
+export function runTensionFor(species) {
+  return GIANT_RUN_TENSION[species.rarityTier] ?? 0;
+}
 
 // Below this stamina fraction the fish is considered "tiring out" for UI
 // purposes.
@@ -507,11 +523,14 @@ function randomRange(min, max) {
 
 export class HookedFish {
   // budgetS: seconds this fight may last; stamina is capped on that same clock.
-  constructor(species, budgetS = CATCH_TIME_LIMIT_S) {
+  // minFishLb: the lure's size floor, so a big lure hooks the bigger fish of a species.
+  constructor(species, budgetS = CATCH_TIME_LIMIT_S, minFishLb = 0) {
     this.species = species;
     this.budgetS = budgetS;
     this.fightElapsed = 0;
-    this.weight = randomRange(species.minWeight, species.maxWeight);
+    this.weight = randomRange(Math.max(species.minWeight, minFishLb), species.maxWeight);
+    this.running = false; // true during a giant's run, when the player must stop reeling
+    this._runTimer = 1.5 + Math.random();
     this.stamina = 1; // 0..1, full to empty
 
     this._escapedReported = false;
@@ -595,7 +614,7 @@ export class HookedFish {
   update(dt, tensionState, reelInput = 0) {
     if (this._escapedReported) {
       // Already told the caller this fish got away; stay inert afterward.
-      return { pullVector: { x: 0, y: 0 }, escaped: false };
+      return { pullVector: { x: 0, y: 0 }, escaped: false, runTension: 0 };
     }
 
     const tension = clamp01(tensionState && typeof tensionState.tension === 'number'
@@ -615,13 +634,34 @@ export class HookedFish {
     this.stamina = Math.min(this.stamina, Math.max(0, 1 - this.fightElapsed / this.budgetS));
 
     this._reelIdleTime = reelInput ? 0 : this._reelIdleTime + dt;
-    if (this._reelIdleTime >= REEL_IDLE_ESCAPE_S) {
+    const idleLimit = runTensionFor(this.species) ? GIANT_REEL_IDLE_ESCAPE_S : REEL_IDLE_ESCAPE_S;
+    if (this._reelIdleTime >= idleLimit) {
       this._escapedReported = true;
-      return { pullVector: { x: 0, y: 0 }, escaped: true };
+      this.running = false;
+      return { pullVector: { x: 0, y: 0 }, escaped: true, runTension: 0 };
     }
 
+    this._updateRun(dt);
     const pullVector = this._computePullVector(dt);
-    return { pullVector, escaped: false };
+    return { pullVector, escaped: false, runTension: this.running ? runTensionFor(this.species) : 0 };
+  }
+
+  _updateRun(dt) {
+    if (!runTensionFor(this.species)) return;
+    this._runTimer -= dt;
+    if (this._runTimer > 0) return;
+    // No run may start this late, so the reel is free to land the fish inside the catch clock.
+    if (!this.running && this.fightElapsed + RUN_DURATION_S + RUN_END_CLEARANCE_S >= this.budgetS) return;
+    this.running = !this.running;
+    this._runTimer = this.running ? RUN_DURATION_S : 2.5 + Math.random() * 2;
+  }
+
+  // True during a run and just before one, so the warning gives the player time to let go.
+  runIsNear() {
+    if (this.running) return true;
+    if (!runTensionFor(this.species)) return false;
+    const lateInFight = this.fightElapsed + RUN_DURATION_S + RUN_END_CLEARANCE_S >= this.budgetS;
+    return !lateInFight && this._runTimer <= RUN_WARNING_S;
   }
 
   isExhausted() {

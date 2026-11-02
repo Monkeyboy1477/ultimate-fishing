@@ -5,11 +5,11 @@
 
 import { CastController, isLureHome, retrieveSpeedFor, stepRetrieve } from './casting3d.js';
 import { LineTensionSystem, fightTiming, stepFight } from './tension.js';
-import { FISH_SPECIES, trySpawnBite, HookedFish, getSellPrice } from './fish.js';
+import { FISH_SPECIES, trySpawnBite, HookedFish, getSellPrice, runTensionFor } from './fish.js';
 import { HOME_POINT } from './constants.js';
 import { initScene, renderScene3D, resizeScene, spawnSplash3D } from './scene3d.js';
 import { renderHUD } from './render.js';
-import { initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleShopButton } from './ui.js';
+import { initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleMenuButtons } from './ui.js';
 import { createEconomy } from './economy.js';
 import { installAudio } from './audio.js';
 import { installTouchControls, isTouchDevice } from './touchControls.js';
@@ -24,7 +24,7 @@ const topBar = {
 };
 
 const economy = createEconomy();
-const idleShopButton = createIdleShopButton(document.getElementById('game-stage'), menuOverlay, economy);
+const idleMenuButtons = createIdleMenuButtons(document.getElementById('game-stage'), menuOverlay, economy);
 installAudio(document.getElementById('game-stage'));
 
 const STATE = {
@@ -264,7 +264,7 @@ function update(dt) {
       const bite = trySpawnBite({ landingDistance: lureDistance }, game.waitElapsed, dt, economy.getEquippedStats('lure'));
       if (bite) {
         const timing = fightTiming(bite, lureDistance, game.sinceRelease);
-        game.hookedFish = new HookedFish(bite, timing.budgetS);
+        game.hookedFish = new HookedFish(bite, timing.budgetS, economy.getEquippedStats('lure').minFishLb);
         game.tensionSystem = new LineTensionSystem(economy.getEquippedStats('line').breakThreshold, timing);
         game.tensionState = game.tensionSystem.update(0, { x: 0, y: 0 }, 0);
         game.fightOrigin = { ...game.lurePos };
@@ -278,13 +278,15 @@ function update(dt) {
       game.tensionState = step.tensionState;
 
       if (step.outcome === 'line_snapped' || step.outcome === 'fish_escaped') {
-        finishFight({ caught: false, reason: step.outcome, species: game.hookedFish.species });
+        const species = game.hookedFish.species;
+        const lineTooWeak = runTensionFor(species) > economy.getEquippedStats('line').breakThreshold;
+        finishFight({ caught: false, reason: step.outcome, species, lineTooWeak });
       } else if (step.outcome === 'landed') {
         const species = game.hookedFish.species;
         const weight = game.hookedFish.weight;
         const sellPrice = getSellPrice(species, weight);
-        const { earned, isRecord } = economy.recordCatch(species, weight, sellPrice);
-        finishFight({ caught: true, species, weight, isRecord, soldFor: earned });
+        const { earned, isRecord, isNewSpecies } = economy.recordCatch(species, weight, sellPrice);
+        finishFight({ caught: true, species, weight, isRecord, isNewSpecies, soldFor: earned });
       }
       break;
     }
@@ -326,7 +328,7 @@ function render() {
   });
 
   const menuOpen = menuOverlay.classList.contains('active');
-  idleShopButton.hidden = game.state !== STATE.MENU || menuOpen;
+  idleMenuButtons.hidden = game.state !== STATE.MENU || menuOpen;
   touchControls.update({
     label: canStartCast() || game.state === STATE.CHARGING ? 'CAST' : 'REEL',
     visible: !menuOpen,
