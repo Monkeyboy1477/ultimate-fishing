@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { buildWorld, setWorldMap, updateWorld } from './world3d.js';
-import { EYE_POS, CAMERA_PITCH_DEG, ROD_TIP, HOME_POINT } from './constants.js';
+import { EYE_POS, CAMERA_PITCH_DEG, ROD_TIP, HOME_POINT, pointsForOffset, PLAYER_SEPARATION_M } from './constants.js';
 import { createFishModel, createLureModel } from './fishModels.js';
 
 const { clamp, damp, degToRad, lerp, radToDeg } = THREE.MathUtils;
@@ -14,13 +14,6 @@ const { clamp, damp, degToRad, lerp, radToDeg } = THREE.MathUtils;
 const MAX_ROD_YAW_RAD = degToRad(40);
 const MAX_CAMERA_YAW_RAD = degToRad(12);
 const CAMERA_PITCH_RAD = degToRad(CAMERA_PITCH_DEG);
-
-// The hand position has to sit inside the lower view frustum or the reel is off screen.
-const GRIP_POS = new THREE.Vector3(0.34, 1.46, -0.85);
-const ROD_VECTOR = new THREE.Vector3(ROD_TIP.x, ROD_TIP.y, ROD_TIP.z).sub(GRIP_POS);
-const ROD_LENGTH = ROD_VECTOR.length();
-const BASE_ROD_YAW = Math.atan2(-ROD_VECTOR.x, -ROD_VECTOR.z);
-const BASE_ROD_PITCH = Math.asin(ROD_VECTOR.y / ROD_LENGTH);
 
 const BLANK_START = 0.22;
 const BLANK_SEGMENTS = 16;
@@ -54,6 +47,8 @@ let started = false;
 let worldMapId = null;
 // The single player's rig. initScene creates exactly one; renderScene3D/resizeScene delegate to it.
 let defaultRig = null;
+// The 2P rigs. initSplitScene creates exactly two; renderSplitScene/resizeSplitScene delegate to them.
+let splitRigs = null;
 
 // Effects (rings/droplets): world-level and shared by every rig, built once regardless of player count.
 const rings = [];
@@ -143,11 +138,6 @@ function speciesColorHex(species) {
 // Real length, exaggerated with range so a far-off fish still reads on screen.
 function displayLength(realLength, distance) {
   return Math.max(realLength * (1 + distance * 0.02), distance * 0.03);
-}
-
-function yawToward(x, z) {
-  const yaw = Math.atan2(-(x - GRIP_POS.x), -(z - GRIP_POS.z));
-  return clamp(yaw, BASE_ROD_YAW - MAX_ROD_YAW_RAD, BASE_ROD_YAW + MAX_ROD_YAW_RAD);
 }
 
 // Dev preview: #fish=<id> shows a species in the catch view, #fish=<id>&mode=fight in the water.
@@ -309,6 +299,20 @@ function updateEffects(dt) {
 function createPlayerRig(scene, originPoints) {
   let cameraYaw = 0;
   let previousState = null;
+
+  // Rod geometry: per-rig, derived from this rig's own rodTip so a second rig with a different
+  // origin gets its own grip/length/yaw/pitch instead of sharing the single-player values.
+  // The hand position has to sit inside the lower view frustum or the reel is off screen.
+  const GRIP_POS = new THREE.Vector3(0.34, 1.46, -0.85);
+  const ROD_VECTOR = new THREE.Vector3(originPoints.rodTip.x, originPoints.rodTip.y, originPoints.rodTip.z).sub(GRIP_POS);
+  const ROD_LENGTH = ROD_VECTOR.length();
+  const BASE_ROD_YAW = Math.atan2(-ROD_VECTOR.x, -ROD_VECTOR.z);
+  const BASE_ROD_PITCH = Math.asin(ROD_VECTOR.y / ROD_LENGTH);
+
+  function yawToward(x, z) {
+    const yaw = Math.atan2(-(x - GRIP_POS.x), -(z - GRIP_POS.z));
+    return clamp(yaw, BASE_ROD_YAW - MAX_ROD_YAW_RAD, BASE_ROD_YAW + MAX_ROD_YAW_RAD);
+  }
 
   // Rod
   let rodPivot = null;
@@ -1164,6 +1168,37 @@ export function initScene(canvas) {
   return { renderer, scene, camera: defaultRig.camera };
 }
 
+// Two-player split-screen setup: one renderer/scene/world (shared, built once) and two independent
+// rigs standing PLAYER_SEPARATION_M apart. Only one of initScene/initSplitScene runs per session.
+export function initSplitScene(canvas) {
+  const width = canvas.width;
+  const height = canvas.height;
+
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.setSize(width, height, false);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+
+  scene = new THREE.Scene();
+  buildWorld(scene, renderer);
+  buildEffects();
+
+  const rigP1 = createPlayerRig(scene, pointsForOffset(-PLAYER_SEPARATION_M / 2));
+  const rigP2 = createPlayerRig(scene, pointsForOffset(PLAYER_SEPARATION_M / 2));
+  splitRigs = [rigP1, rigP2];
+  const halfAspect = (width / 2) / height;
+  for (const rig of splitRigs) {
+    rig.camera.aspect = halfAspect;
+    rig.camera.updateProjectionMatrix();
+  }
+
+  clock = new THREE.Clock();
+  started = true;
+  return { rigs: splitRigs };
+}
+
 // Matches the view for screens narrower than the desktop's 3:2, so the rod stays in frame.
 export function resizeScene(width, height) {
   if (!renderer) return;
@@ -1178,6 +1213,19 @@ export function resizeScene(width, height) {
     ? BASE_FOV_DEG
     : radToDeg(2 * Math.atan(Math.tan(degToRad(BASE_FOV_DEG / 2)) * (BASE_ASPECT / aspect)));
   defaultRig.camera.updateProjectionMatrix();
+}
+
+export function resizeSplitScene(width, height) {
+  if (!renderer) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
+  renderer.setPixelRatio(ratio);
+  renderer.setSize(width, height, false);
+  const halfAspect = (width / 2) / height;
+  for (const rig of splitRigs) {
+    rig.camera.aspect = halfAspect;
+    rig.camera.fov = BASE_FOV_DEG; // split panes are already narrower than one full view; no letterbox compensation needed
+    rig.camera.updateProjectionMatrix();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,4 +1303,27 @@ export function renderScene3D(frameState) {
   updateWorld(dt, time);
   defaultRig.updateFrame(frame, dt, time);
   defaultRig.renderInto(renderer);
+}
+
+// Two-player split-screen frame entry point: one world update, two independent rig updates,
+// each rendered into its own half of the canvas via viewport+scissor.
+export function renderSplitScene(frameStates) {
+  if (!started) return;
+  const dt = Math.min(clock ? clock.getDelta() : 0.016, 0.05);
+  const time = frameStates[0].time ?? 0;
+  const mapId = frameStates[0].mapId || 'pond';
+  if (mapId !== worldMapId) { worldMapId = mapId; setWorldMap(mapId); }
+  updateWorld(dt, time);
+  const [rigP1, rigP2] = splitRigs;
+  rigP1.updateFrame(frameStates[0], dt, time);
+  rigP2.updateFrame(frameStates[1], dt, time);
+  const { width, height } = renderer.domElement;
+  renderer.setScissorTest(true);
+  renderer.setViewport(0, 0, width / 2, height);
+  renderer.setScissor(0, 0, width / 2, height);
+  rigP1.renderInto(renderer);
+  renderer.setViewport(width / 2, 0, width / 2, height);
+  renderer.setScissor(width / 2, 0, width / 2, height);
+  rigP2.renderInto(renderer);
+  renderer.setScissorTest(false);
 }
