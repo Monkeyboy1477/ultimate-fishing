@@ -104,6 +104,12 @@ body {
 
 #game-stage.split-screen #hud-overlay,
 #game-stage.split-screen #menu-overlay { right: 50%; left: 0; }
+
+/* The shared pause/shop menu (main.js's openSharedMenu) lives in #menu-overlay but should
+   cover the whole stage, not just Player 1's half -- this overrides the confinement above
+   back to full-width while #game-stage carries this class. */
+#game-stage.split-screen.shared-menu-open #menu-overlay { left: 0; right: 0; }
+
 #game-stage.split-screen #hud-overlay-p2,
 #game-stage.split-screen #menu-overlay-p2 { position: absolute; top: 0; bottom: 0; left: 50%; right: 0; pointer-events: none; }
 #game-stage.split-screen #hud-overlay-p2 { display: block; }

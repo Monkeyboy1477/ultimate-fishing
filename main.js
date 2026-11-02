@@ -564,14 +564,26 @@ function setupTwoPlayer(economyMode) {
     render();
   };
 
+  // Whatever P1's own overlay (idle start screen or a result panel) held before the shared
+  // menu opened, so closing the shared menu puts it back instead of leaving P1's half blank.
+  // Actual DOM nodes (not innerHTML strings) so Start Fishing/Cast Again keep their listeners.
+  let savedMenuChildren = [];
+  let savedMenuWasActive = false;
+
   function closeSharedMenu() {
-    menuOverlay.classList.remove('active');
     menuOverlay.innerHTML = '';
+    savedMenuChildren.forEach((node) => menuOverlay.appendChild(node));
+    menuOverlay.classList.toggle('active', savedMenuWasActive);
+    gameStage.classList.remove('shared-menu-open');
+    savedMenuChildren = [];
     pausedForMenu = false;
   }
 
   function openSharedMenu() {
     pausedForMenu = true;
+    savedMenuChildren = Array.from(menuOverlay.childNodes);
+    savedMenuWasActive = menuOverlay.classList.contains('active');
+    gameStage.classList.add('shared-menu-open');
     const players = economyMode === 'team'
       ? [{ label: 'Team', economy: economyP1 }]
       : [{ label: 'Player 1', economy: economyP1 }, { label: 'Player 2', economy: economyP2 }];
