@@ -463,6 +463,10 @@ export function initScene(canvas) {
 export function resizeScene(width, height) {
   if (!renderer) return;
   const aspect = width / height;
+  // A full-screen game on a big monitor has a lot of pixels; cap them so it stays smooth.
+  const maxPixels = 2_400_000;
+  const ratio = Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(maxPixels / (width * height)));
+  renderer.setPixelRatio(Math.max(ratio, 0.5));
   renderer.setSize(width, height, false);
   camera.aspect = aspect;
   camera.fov = aspect >= BASE_ASPECT

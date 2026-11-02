@@ -164,16 +164,18 @@ const touchControls = installTouchControls(document.getElementById('game-stage')
   },
 });
 
-// Phones fill the screen, so the 3D view has to follow the stage's shape.
+// The stage fills the window (or the whole screen in full screen), so the 3D view follows its size.
 function fitSceneToCanvas() {
   const { clientWidth, clientHeight } = canvas;
   if (clientWidth > 0 && clientHeight > 0) resizeScene(clientWidth, clientHeight);
+  const topBar = document.getElementById('top-bar');
+  if (topBar) document.documentElement.style.setProperty('--top-bar-height', `${topBar.offsetHeight}px`);
 }
+new ResizeObserver(fitSceneToCanvas).observe(canvas);
 
 function enableTouchLayout() {
   if (document.body.classList.contains('touch')) return;
   document.body.classList.add('touch');
-  new ResizeObserver(fitSceneToCanvas).observe(canvas);
   fitSceneToCanvas();
 }
 
