@@ -160,6 +160,13 @@ function createPlayerController({ economy, originPoints, menuOverlayElement, sho
     startReel,
     stopReel,
 
+    // Canvas mouse/pointer "drag to charge" is cast-only and stays independent of the
+    // touch overlay's one-button cast-or-reel dispatcher (onActionPress/onActionRelease):
+    // a canvas press never touches actionHeldAs, so charging via the canvas can never be
+    // left stuck by a concurrent press of the touch button (or vice versa).
+    startCast,
+    releaseCast,
+
     isMenuIdle() {
       return canStartCast();
     },
@@ -294,7 +301,7 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!singlePlayer.isMenuIdle()) return;
   castPointerId = e.pointerId;
   singlePlayer.setAimAngle(aimAngleFromEvent(e));
-  singlePlayer.onActionPress();
+  singlePlayer.startCast();
 });
 
 canvas.addEventListener('pointermove', (e) => {
@@ -305,7 +312,7 @@ canvas.addEventListener('pointermove', (e) => {
 function endCanvasCast(e) {
   if (e.pointerId !== castPointerId) return;
   castPointerId = null;
-  singlePlayer.onActionRelease();
+  singlePlayer.releaseCast();
 }
 window.addEventListener('pointerup', endCanvasCast);
 window.addEventListener('pointercancel', endCanvasCast);
