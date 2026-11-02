@@ -123,9 +123,9 @@ function seedCollection(stats) {
   return best ? { [best.id]: { count: 1, bestWeight: stats.bestWeight } } : {};
 }
 
-function loadState() {
+function loadState(saveKey) {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(saveKey);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
     // Shallow-merge over defaults so a save from an older version with missing fields
@@ -149,12 +149,13 @@ function loadState() {
   }
 }
 
-export function createEconomy() {
-  let state = loadState();
+export function createEconomy(storageKeySuffix = '') {
+  const saveKey = `${SAVE_KEY}${storageKeySuffix}`;
+  let state = loadState(saveKey);
 
   function persist() {
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+      localStorage.setItem(saveKey, JSON.stringify(state));
     } catch {
       // Private browsing / storage disabled: play on without persistence.
     }
