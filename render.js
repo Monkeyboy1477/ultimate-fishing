@@ -466,6 +466,19 @@ function buildHud(hudElement) {
   fightPanel.appendChild(staminaTrack);
   fightPanel.appendChild(distanceRow);
 
+  // Per-player live currency/catch count, shown only when the caller passes state.playerStats
+  // (2P Competitive mode, where each half needs its own number since the two wallets differ --
+  // see render.js's renderHUD below and main.js's setupTwoPlayer). Always built, like every
+  // other hud-panel here, so it stays hidden (no 'visible' class) and inert everywhere else.
+  const statsPanel = document.createElement('div');
+  statsPanel.className = 'hud-panel hud-stats-panel';
+  const statsCatch = document.createElement('div');
+  statsCatch.className = 'hud-label';
+  const statsCurrency = document.createElement('div');
+  statsCurrency.className = 'hud-label hud-stats-currency';
+  statsPanel.appendChild(statsCatch);
+  statsPanel.appendChild(statsCurrency);
+
   const lureHint = document.createElement('div');
   lureHint.className = 'hud-panel hud-lure-hint';
   lureHint.textContent = 'No fish here will take this lure. Equip a different one in the Shop.';
@@ -480,11 +493,15 @@ function buildHud(hudElement) {
 
   hudElement.appendChild(powerPanel);
   hudElement.appendChild(fightPanel);
+  hudElement.appendChild(statsPanel);
   hudElement.appendChild(reelHint);
   hudElement.appendChild(runWarning);
   hudElement.appendChild(lureHint);
 
-  const refs = { powerPanel, powerFill, fightPanel, speciesName, tensionFill, staminaFill, distanceRow, reelHint, runWarning, lureHint };
+  const refs = {
+    powerPanel, powerFill, fightPanel, speciesName, tensionFill, staminaFill, distanceRow,
+    reelHint, runWarning, lureHint, statsPanel, statsCatch, statsCurrency,
+  };
   hudRegistry.set(hudElement, refs);
   return refs;
 }
@@ -502,6 +519,13 @@ export function renderHUD(hudElement, state) {
   refs.lureHint.classList.toggle('visible', Boolean(state.noFishForLure));
   refs.runWarning.classList.toggle('visible', isFighting && Boolean(state.hookedFish?.runIsNear()));
   refs.reelHint.textContent = state.touch ? 'Hold REEL to reel in' : 'Hold Space to reel in';
+
+  const showStats = Boolean(state.playerStats);
+  refs.statsPanel.classList.toggle('visible', showStats);
+  if (showStats) {
+    refs.statsCatch.textContent = `Catches: ${state.playerStats.catchCount}`;
+    refs.statsCurrency.textContent = `$${Math.floor(state.playerStats.currency).toLocaleString('en-US')}`;
+  }
 
   if (isCharging) {
     const power = Math.max(0, Math.min(1, state.chargePower ?? 0));

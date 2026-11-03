@@ -11,7 +11,7 @@ import { initScene, renderScene3D, resizeScene, spawnSplash3D, initSplitScene, r
 import { renderHUD } from './render.js';
 import {
   initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleMenuButtons,
-  showModeSelect, showSharedMenu,
+  showModeSelect, showSharedMenu, dismissIdleOrResultPanel,
 } from './ui.js';
 import { createEconomy } from './economy.js';
 import { installAudio } from './audio.js';
@@ -181,6 +181,18 @@ function createPlayerController({ economy, originPoints, menuOverlayElement, sho
       return canStartCast();
     },
 
+    // Hides this player's own idle start screen or result panel if either is currently
+    // showing, the same way clicking that panel's own button would -- without running its
+    // onStartCast/onRestart callback. bindPlayerKeys calls this before dispatching a keyboard
+    // action-key press that starts a new cast, since (unlike a mouse click) a keyup/keydown
+    // isn't blocked by the panel's own DOM/pointer-events stacking. See ui.js's
+    // dismissIdleOrResultPanel for why this matters: otherwise the panel stays visible over a
+    // cast that's now actually running, and a later "Cast Again" click on it would wipe that
+    // cast via returnLureHome().
+    dismissPanel() {
+      dismissIdleOrResultPanel(menuOverlayElement);
+    },
+
     resetToMenu() {
       game.state = STATE.MENU;
     },
@@ -296,18 +308,29 @@ function createPlayerController({ economy, originPoints, menuOverlayElement, sho
 // snapping back to center -- e.g. hold left, tap-and-release right mid-charge should keep
 // aiming left, not zero out. On keydown the most recently pressed key still wins outright
 // (matching the touch/mouse aim's single-direction model), same as before this fix.
-function bindPlayerKeys(controller, { aimLeftKey, aimRightKey, actionKey }) {
+function bindPlayerKeys(controller, { aimLeftKey, aimRightKey, actionKey, isPaused }) {
   let actionHeldAs = null;
   let aimDirection = 0;
   let leftHeld = false;
   let rightHeld = false;
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
+    // While the shared menu is open, these keys (including Player 2's arrow keys, which
+    // double as the shared Shop/Fish Book/Maps panel's normal scroll keys) must behave like
+    // the panel has focus, not like a still-live aim/cast input underneath it: skip
+    // preventDefault and every dispatch below entirely.
+    if (isPaused && isPaused()) return;
     if (e.code === aimLeftKey) { leftHeld = true; aimDirection = -1; }
     else if (e.code === aimRightKey) { rightHeld = true; aimDirection = 1; }
     else if (e.code === actionKey) {
-      if (controller.isMenuIdle()) { actionHeldAs = 'cast'; controller.onActionPress(); }
-      else { actionHeldAs = 'reel'; controller.onActionPress(); }
+      if (controller.isMenuIdle()) {
+        actionHeldAs = 'cast';
+        // Dismiss this player's own idle/result panel first -- a keyboard press isn't
+        // blocked by the panel's pointer-events the way a mouse click would be, so without
+        // this the panel stays visible over the cast that's about to start.
+        controller.dismissPanel();
+        controller.onActionPress();
+      } else { actionHeldAs = 'reel'; controller.onActionPress(); }
     } else return;
     e.preventDefault();
     controller.onAim(aimDirection);
@@ -323,6 +346,16 @@ function bindPlayerKeys(controller, { aimLeftKey, aimRightKey, actionKey }) {
       actionHeldAs = null;
     } else return;
     e.preventDefault();
+  });
+  // If the window loses focus while the action key is physically held, its keyup may never
+  // fire, leaving this player's reel/charge input stuck "on" (mirrors the single-player
+  // Space-key blur handler below). Releases whatever the key currently means; a no-op if it
+  // wasn't held.
+  window.addEventListener('blur', () => {
+    if (actionHeldAs) {
+      controller.onActionRelease();
+      actionHeldAs = null;
+    }
   });
 }
 
@@ -513,18 +546,28 @@ function setupTwoPlayer(economyMode) {
     showShopLinks: false,
   });
 
-  bindPlayerKeys(p1, { aimLeftKey: 'KeyA', aimRightKey: 'KeyD', actionKey: 'KeyS' });
-  bindPlayerKeys(p2, { aimLeftKey: 'ArrowLeft', aimRightKey: 'ArrowRight', actionKey: 'ArrowDown' });
+  bindPlayerKeys(p1, {
+    aimLeftKey: 'KeyA', aimRightKey: 'KeyD', actionKey: 'KeyS', isPaused: () => pausedForMenu,
+  });
+  bindPlayerKeys(p2, {
+    aimLeftKey: 'ArrowLeft', aimRightKey: 'ArrowRight', actionKey: 'ArrowDown', isPaused: () => pausedForMenu,
+  });
 
   initMenus(menuOverlay, {
     onStartCast: () => p1.resetToMenu(),
     onRestart: () => p1.returnLureHome(),
-  }, economyP1, { showShopLinks: false });
+  }, economyP1, {
+    showShopLinks: false,
+    instructionsText: 'Player 1: A/D to aim, hold S to cast and to reel in. Press Escape anytime to open the shared menu (pauses both players).',
+  });
 
   initMenus(menuOverlayP2, {
     onStartCast: () => p2.resetToMenu(),
     onRestart: () => p2.returnLureHome(),
-  }, economyP2, { showShopLinks: false });
+  }, economyP2, {
+    showShopLinks: false,
+    instructionsText: 'Player 2: Left/Right arrows to aim, hold Down arrow to cast and to reel in. Press Escape anytime to open the shared menu (pauses both players).',
+  });
 
   function renderPlayerHUD(hudEl, menuEl, frameState, playerEconomy) {
     renderHUD(hudEl, {
@@ -535,6 +578,17 @@ function setupTwoPlayer(economyMode) {
       touch: document.body.classList.contains('touch'),
       noFishForLure: eligibleSpeciesFor(playerEconomy.getEquippedStats('lure'), playerEconomy.getCurrentMap().id).length === 0
         && !menuEl.classList.contains('active'),
+      // Each half shows its own player's live currency/catch count in Competitive mode, since
+      // the two wallets differ there; Team mode already shows the one shared number on the
+      // top bar, so this stays off (render.js's statsPanel is just hidden, per-element).
+      // Hidden while the shared menu is open: the shared menu already shows both players'
+      // numbers via its Player 1/Player 2 tabs, and hud-overlay-p2 stacks above #menu-overlay
+      // in DOM order, so this panel would otherwise visually sit on top of the shared menu's
+      // own content (pointer-events:none keeps it from blocking clicks either way, but there's
+      // no reason to clutter the shared menu with a redundant floating number).
+      playerStats: economyMode === 'competitive' && !pausedForMenu
+        ? { catchCount: playerEconomy.getStats().catchCount, currency: playerEconomy.getCurrency() }
+        : null,
     });
   }
 
@@ -592,7 +646,7 @@ function setupTwoPlayer(economyMode) {
 
   // Active only in 2P mode: this listener is only ever registered when setupTwoPlayer runs.
   window.addEventListener('keydown', (e) => {
-    if (e.code !== 'Escape') return;
+    if (e.code !== 'Escape' || e.repeat) return;
     e.preventDefault();
     if (pausedForMenu) closeSharedMenu();
     else openSharedMenu();

@@ -75,6 +75,9 @@ const fishNose = new THREE.Vector3();
 const color1 = new THREE.Color();
 const zAxis = new THREE.Vector3(0, 0, 1);
 const localUp = new THREE.Vector3(0, 1, 0);
+// Scratch output for renderer.getSize(), which returns CSS pixels (not device pixels) --
+// unlike renderer.domElement.width/height, which setViewport/setScissor would double-scale.
+const splitSizeVector = new THREE.Vector2();
 
 // ---------------------------------------------------------------------------
 // Setup helpers (pure builders; no per-rig state)
@@ -1129,7 +1132,6 @@ function createPlayerRig(scene, originPoints) {
       }
     }
 
-    updateEffects(dt);
     previousState = state;
   }
 
@@ -1308,6 +1310,7 @@ export function renderScene3D(frameState) {
   const { time = 0 } = frame;
   updateWorld(dt, time);
   defaultRig.updateFrame(frame, dt, time);
+  updateEffects(dt);
   defaultRig.renderInto(renderer);
 }
 
@@ -1323,7 +1326,14 @@ export function renderSplitScene(frameStates) {
   const [rigP1, rigP2] = splitRigs;
   rigP1.updateFrame(frameStates[0], dt, time);
   rigP2.updateFrame(frameStates[1], dt, time);
-  const { width, height } = renderer.domElement;
+  updateEffects(dt);
+  // renderer.setViewport/setScissor multiply their arguments by the renderer's own pixel ratio
+  // internally, so they need CSS pixels (renderer.getSize) here, not renderer.domElement's
+  // width/height, which are already device pixels (CSS size * pixel ratio). Using device
+  // pixels here would double-apply the ratio and misplace/mis-size both halves whenever the
+  // pixel ratio isn't exactly 1 (e.g. Windows display scaling).
+  const size = renderer.getSize(splitSizeVector);
+  const { x: width, y: height } = size;
   renderer.setScissorTest(true);
   renderer.setViewport(0, 0, width / 2, height);
   renderer.setScissor(0, 0, width / 2, height);

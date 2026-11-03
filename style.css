@@ -117,6 +117,14 @@ body {
 #game-stage.split-screen #menu-overlay-p2.active { pointer-events: auto; }
 #game-stage.split-screen::after { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; background: rgba(255,255,255,0.25); pointer-events: none; }
 
+/* While the shared pause/shop menu is open (full-width, see the shared-menu-open rule above),
+   Player 2's own idle/result overlay must never intercept clicks meant for the shared menu's
+   content -- even though #menu-overlay-p2.active normally re-enables pointer-events, which it
+   stays while P2's own panel is simply sitting underneath the (now full-width) shared menu.
+   Matches that rule's specificity (two IDs + two classes) and comes after it, so this wins. */
+#game-stage.split-screen.shared-menu-open #hud-overlay-p2,
+#game-stage.split-screen.shared-menu-open #menu-overlay-p2 { pointer-events: none; }
+
 /* ---- render.js: HUD overlay panels (appended, scoped to hud- prefix) ---- */
 .hud-panel {
   position: absolute;
@@ -136,6 +144,11 @@ body {
 .hud-power-panel { left: 4%; bottom: 5%; width: 26%; min-width: 120px; }
 
 .hud-fight-panel { right: 4%; top: 4%; width: 34%; min-width: 150px; }
+
+/* Per-player currency/catch count, shown only in 2P Competitive mode (see render.js's
+   state.playerStats) -- sits opposite the fight panel so it doesn't collide with it. */
+.hud-stats-panel { left: 4%; top: 4%; width: auto; min-width: 110px; }
+.hud-stats-currency { color: var(--color-ui-accent); font-weight: 700; }
 
 .hud-reel-hint { left: 50%; bottom: 5%; transform: translateX(-50%); white-space: nowrap; }
 

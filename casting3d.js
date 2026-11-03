@@ -139,7 +139,7 @@ function horizontalDistanceToHome(pos, homePoint = HOME_POINT) {
 
 // A lure cut off right after release can still be over the dock, shoreward of homePoint.
 export function isLureHome(pos, homePoint = HOME_POINT) {
-  return pos.z > homePoint.z || horizontalDistanceToHome(pos, homePoint) <= HOME_RADIUS_M;
+  return pos.z >= homePoint.z || horizontalDistanceToHome(pos, homePoint) <= HOME_RADIUS_M;
 }
 
 export function retrieveSpeedFor(pos, homePoint = HOME_POINT) {

@@ -16,7 +16,9 @@ test('a cast from a custom origin lands offset by exactly that origin\'s x diffe
 
 test('isLureHome/retrieveSpeedFor/stepRetrieve honor a custom home point', () => {
   const home = { x: HOME_POINT.x + 0.6, y: HOME_POINT.y, z: HOME_POINT.z };
-  const farFromCustomHome = { x: home.x + 10, y: 0, z: home.z };
+  // 1 unit off the exact z boundary (isLureHome treats pos.z >= homePoint.z as home), so this
+  // still proves the function honors a custom home point without landing on that boundary.
+  const farFromCustomHome = { x: home.x + 10, y: 0, z: home.z - 1 };
   assert.equal(isLureHome(farFromCustomHome, home), false);
   assert.equal(isLureHome(home, home), true);
   const speed = retrieveSpeedFor(farFromCustomHome, home);

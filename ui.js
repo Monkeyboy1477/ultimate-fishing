@@ -37,7 +37,7 @@ function appendMenuButtons(container, menuOverlayElement, getEconomy, onClose, b
 }
 
 function buildStartScreen(menuOverlayElement, callbacks, options = {}) {
-  const { showShopLinks = true } = options;
+  const { showShopLinks = true, instructionsText = null } = options;
   const panel = document.createElement('div');
   panel.className = 'menu-panel';
 
@@ -47,9 +47,9 @@ function buildStartScreen(menuOverlayElement, callbacks, options = {}) {
 
   const instructions = document.createElement('p');
   instructions.className = 'menu-panel-text';
-  instructions.textContent = isTouchDevice()
+  instructions.textContent = instructionsText || (isTouchDevice()
     ? 'Hold CAST, use the arrows to aim, and let go to let it fly. Hold REEL to reel in anytime — but ease off when a fish fights back or the line will snap.'
-    : 'Hold the mouse button to cast, move left/right to aim, release to let it fly. Hold Space to reel in anytime — but ease off when a fish fights back or the line will snap.';
+    : 'Hold the mouse button to cast, move left/right to aim, release to let it fly. Hold Space to reel in anytime — but ease off when a fish fights back or the line will snap.');
 
   const earn = document.createElement('p');
   earn.className = 'menu-panel-text';
@@ -99,6 +99,25 @@ function hideStartScreen(menuOverlayElement) {
     menuOverlayElement.removeChild(startScreenEl);
   }
   menuOverlayElement.classList.remove('active');
+}
+
+// Hides whichever of this overlay's own idle start screen or result panel is currently
+// mounted, the same way clicking that panel's own "Start Fishing"/"Cast Again" button would --
+// without running either button's onStartCast/onRestart callback. Used so a keyboard action
+// key that starts a brand-new cast (main.js's bindPlayerKeys) can dismiss that player's own
+// stale panel first, instead of leaving it showing over a cast/fight that's now actually
+// running underneath it (where a later click on a now-stale "Cast Again" would otherwise call
+// onRestart/returnLureHome and wipe that new cast). No-op if nothing of this overlay's own is
+// currently mounted (e.g. the shared 2P pause menu has temporarily taken over this element).
+export function dismissIdleOrResultPanel(menuOverlayElement) {
+  const state = getMenuState(menuOverlayElement);
+  if (state.startScreenEl && state.startScreenEl.parentNode === menuOverlayElement) {
+    hideStartScreen(menuOverlayElement);
+  } else if (state.resultPanelEl && state.resultPanelEl.parentNode === menuOverlayElement) {
+    menuOverlayElement.classList.remove('active');
+    menuOverlayElement.innerHTML = '';
+    state.resultPanelEl = null;
+  }
 }
 
 export function initMenus(menuOverlayElement, callbacks, economy, options = {}) {
@@ -446,7 +465,7 @@ export function showBook(menuOverlayElement, economy, onClose) {
 // Maps
 // ---------------------------------------------------------------------------
 
-function buildMapCard(map, economy, onChange) {
+function buildMapCard(map, economy, onChange, syncMapTravel) {
   const card = document.createElement('div');
   card.className = 'gear-card';
 
@@ -483,7 +502,7 @@ function buildMapCard(map, economy, onChange) {
   } else if (economy.isMapOwned(map.id)) {
     button.textContent = 'Travel';
     button.addEventListener('click', () => {
-      economy.travelTo(map.id);
+      if (economy.travelTo(map.id) && syncMapTravel) syncMapTravel(map.id);
       onChange();
     });
   } else {
@@ -491,7 +510,8 @@ function buildMapCard(map, economy, onChange) {
     button.textContent = affordable ? 'Buy' : 'Need more $';
     button.disabled = !affordable;
     button.addEventListener('click', () => {
-      economy.buyMap(map.id);
+      const result = economy.buyMap(map.id);
+      if (result.ok && syncMapTravel) syncMapTravel(map.id);
       onChange();
     });
   }
@@ -500,7 +520,7 @@ function buildMapCard(map, economy, onChange) {
   return card;
 }
 
-function buildMapsPanel(economy, onClose) {
+function buildMapsPanel(economy, onClose, syncMapTravel) {
   const panel = document.createElement('div');
   panel.className = 'menu-panel menu-panel-shop';
 
@@ -515,12 +535,12 @@ function buildMapsPanel(economy, onClose) {
   panel.appendChild(currency);
 
   const rerender = () => {
-    panel.replaceWith(buildMapsPanel(economy, onClose));
+    panel.replaceWith(buildMapsPanel(economy, onClose, syncMapTravel));
   };
 
   const row = document.createElement('div');
   row.className = 'gear-card-row';
-  economy.getMaps().forEach((map) => row.appendChild(buildMapCard(map, economy, rerender)));
+  economy.getMaps().forEach((map) => row.appendChild(buildMapCard(map, economy, rerender, syncMapTravel)));
   panel.appendChild(row);
 
   const closeButton = document.createElement('button');
@@ -580,7 +600,17 @@ export function showSharedMenu(menuOverlayElement, players, onClose) {
     wrapper.appendChild(screenTabs);
 
     const [, , buildPanel] = SHARED_MENU_SCREENS.find(([key]) => key === activeScreen);
-    wrapper.appendChild(buildPanel(players[activeIndex].economy, onClose));
+    const activeEconomy = players[activeIndex].economy;
+    // There's only one rendered world regardless of wallet-separation mode, so when the Maps
+    // tab travels one player's economy to a new map, every other player's economy must be
+    // force-synced to the same map (see economy.js's setCurrentMap) -- otherwise a Competitive
+    // player could keep fishing a map that doesn't match what's actually being rendered.
+    const syncMapTravel = (mapId) => {
+      players.forEach((player) => {
+        if (player.economy !== activeEconomy) player.economy.setCurrentMap(mapId);
+      });
+    };
+    wrapper.appendChild(buildPanel(activeEconomy, onClose, syncMapTravel));
 
     menuOverlayElement.appendChild(wrapper);
     menuOverlayElement.classList.add('active');

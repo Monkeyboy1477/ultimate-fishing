@@ -206,6 +206,17 @@ export function createEconomy(storageKeySuffix = '') {
       return true;
     },
 
+    // Directly sets the active map, without requiring ownership or charging anything. In 2P
+    // Competitive mode there are two separate economies/wallets but only one rendered world,
+    // so when either player travels, the other economy's currentMap must be force-synced to
+    // match (its own ownedMaps/currency are untouched) -- see main.js's showSharedMenu wiring.
+    setCurrentMap(mapId) {
+      if (!getMap(mapId)) return false;
+      state.currentMap = mapId;
+      persist();
+      return true;
+    },
+
     getGearTiers(category) {
       return GEAR_TABLES[category];
     },
