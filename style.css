@@ -48,6 +48,41 @@ body {
 
 .ad-placeholder-label { opacity: 0.8; }
 
+#bottom-bar a { color: var(--color-ui-accent); }
+
+/* --- ads.js: cookie-consent banner for AdSense --- */
+#ads-consent-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  background: #081a24;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
+}
+
+#ads-consent-banner p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  flex: 1 1 280px;
+}
+
+#ads-consent-banner a { color: var(--color-ui-accent); }
+
+.ads-consent-buttons {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 #ad-slot-top, #ad-slot-footer {
   width: 728px;
   max-width: 95%;
