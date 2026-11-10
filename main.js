@@ -16,7 +16,9 @@ import {
 import { createEconomy } from './economy.js';
 import { installAudio, suspendAudio, resumeAudio } from './audio.js';
 import { installTouchControls, isTouchDevice } from './touchControls.js';
-import { pokiInit, pokiLoadingFinished, pokiGameplayStart, pokiGameplayStop, pokiCommercialBreak } from './poki.js';
+import { pokiInit, pokiLoadingFinished, pokiGameplayStart, pokiGameplayStop } from './poki.js';
+import { crazyGamesInit, crazyGamesLoadingStop, crazyGamesGameplayStart, crazyGamesGameplayStop } from './crazygames.js';
+import { platformAdBreak } from './platformAds.js';
 import { checkNewAchievements } from './achievements.js';
 
 const canvas = document.getElementById('game-canvas');
@@ -414,11 +416,18 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
 
 const PLAYING_STATES = new Set([STATE.CHARGING, STATE.CAST_FLIGHT, STATE.WAITING_BITE, STATE.FIGHTING]);
-// Tells Poki whether the player is actively fishing right now vs. idle at a menu/result panel.
-// Safe to call every frame: pokiGameplayStart/Stop only forward an actual state change.
-function syncPokiGameplay(states) {
-  if (states.some((s) => PLAYING_STATES.has(s))) pokiGameplayStart();
-  else pokiGameplayStop();
+// Tells whichever portal SDK is live (Poki, CrazyGames) whether the player is actively fishing
+// right now vs. idle at a menu/result panel. Safe to call every frame and on every build: each
+// platform's gameplayStart/Stop only forwards an actual state change, and is a no-op without
+// that platform's SDK.
+function syncPlatformGameplay(states) {
+  if (states.some((s) => PLAYING_STATES.has(s))) {
+    pokiGameplayStart();
+    crazyGamesGameplayStart();
+  } else {
+    pokiGameplayStop();
+    crazyGamesGameplayStop();
+  }
 }
 
 // Set once mode selection resolves (Step 3); read by fitSceneToCanvas (Step 6) to pick
@@ -527,7 +536,7 @@ function setupSinglePlayer() {
 
   function render() {
     const frameState = singlePlayer.getFrameState();
-    syncPokiGameplay([frameState.state]);
+    syncPlatformGameplay([frameState.state]);
     renderScene3D(frameState);
 
     renderHUD(hudOverlay, {
@@ -560,7 +569,7 @@ function setupSinglePlayer() {
   initMenus(menuOverlay, {
     onStartCast: () => singlePlayer.resetToMenu(),
     onRestart: () => {
-      pokiCommercialBreak({ onPause: suspendAudio, onResume: resumeAudio })
+      platformAdBreak({ onPause: suspendAudio, onResume: resumeAudio })
         .then(() => singlePlayer.returnLureHome());
     },
   }, economy);
@@ -622,7 +631,7 @@ function setupTwoPlayer(economyMode) {
   initMenus(menuOverlay, {
     onStartCast: () => p1.resetToMenu(),
     onRestart: () => {
-      pokiCommercialBreak({ onPause: suspendAudio, onResume: resumeAudio })
+      platformAdBreak({ onPause: suspendAudio, onResume: resumeAudio })
         .then(() => p1.returnLureHome());
     },
   }, economyP1, {
@@ -633,7 +642,7 @@ function setupTwoPlayer(economyMode) {
   initMenus(menuOverlayP2, {
     onStartCast: () => p2.resetToMenu(),
     onRestart: () => {
-      pokiCommercialBreak({ onPause: suspendAudio, onResume: resumeAudio })
+      platformAdBreak({ onPause: suspendAudio, onResume: resumeAudio })
         .then(() => p2.returnLureHome());
     },
   }, economyP2, {
@@ -668,7 +677,7 @@ function setupTwoPlayer(economyMode) {
     sharedMenuButton.hidden = pausedForMenu;
     const frameP1 = p1.getFrameState();
     const frameP2 = p2.getFrameState();
-    if (!pausedForMenu) syncPokiGameplay([frameP1.state, frameP2.state]);
+    if (!pausedForMenu) syncPlatformGameplay([frameP1.state, frameP2.state]);
     renderSplitScene([frameP1, frameP2]);
 
     renderPlayerHUD(hudOverlay, menuOverlay, frameP1, economyP1);
@@ -699,7 +708,7 @@ function setupTwoPlayer(economyMode) {
   let savedMenuWasActive = false;
 
   function closeSharedMenu() {
-    pokiCommercialBreak({ onPause: suspendAudio, onResume: resumeAudio }).then(() => {
+    platformAdBreak({ onPause: suspendAudio, onResume: resumeAudio }).then(() => {
       menuOverlay.innerHTML = '';
       savedMenuChildren.forEach((node) => menuOverlay.appendChild(node));
       menuOverlay.classList.toggle('active', savedMenuWasActive);
@@ -712,6 +721,7 @@ function setupTwoPlayer(economyMode) {
   function openSharedMenu() {
     pausedForMenu = true;
     pokiGameplayStop();
+    crazyGamesGameplayStop();
     savedMenuChildren = Array.from(menuOverlay.childNodes);
     savedMenuWasActive = menuOverlay.classList.contains('active');
     gameStage.classList.add('shared-menu-open');
@@ -745,8 +755,9 @@ function setupTwoPlayer(economyMode) {
   fitSceneToCanvas();
 }
 
-pokiInit().then(() => {
+Promise.all([pokiInit(), crazyGamesInit()]).then(() => {
   pokiLoadingFinished();
+  crazyGamesLoadingStop();
 
   showModeSelect(menuOverlay, (choice) => {
     if (choice.mode === '1p') {

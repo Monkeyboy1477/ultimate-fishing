@@ -6,7 +6,7 @@ import { mapsForSpecies } from './maps.js';
 import { fishThumbnail } from './scene3d.js';
 import { isTouchDevice } from './touchControls.js';
 import { ACHIEVEMENTS } from './achievements.js';
-import { pokiRewardedBreak, pokiAvailable } from './poki.js';
+import { platformAdsAvailable, platformRewardedAd } from './platformAds.js';
 import { suspendAudio, resumeAudio } from './audio.js';
 
 // Per-overlay state (callbacks/economy/current panel), keyed by menuOverlayElement so a 2P
@@ -331,9 +331,9 @@ function buildShopPanel(economy, onClose) {
     panel.replaceWith(fresh);
   };
 
-  // Only rendered on the Poki build (pokiAvailable() is false everywhere else), since
-  // pokiRewardedBreak has no real ad to show without that SDK.
-  if (pokiAvailable()) {
+  // Only rendered on a portal build with a live ad SDK (Poki or CrazyGames) -- plain no-op
+  // everywhere else (itch.io, GitHub Pages), since there's no real ad to show there.
+  if (platformAdsAvailable()) {
     const adButton = document.createElement('button');
     adButton.type = 'button';
     adButton.className = 'menu-button menu-button-secondary ad-reward-button';
@@ -342,7 +342,7 @@ function buildShopPanel(economy, onClose) {
     adButton.addEventListener('click', () => {
       adButton.disabled = true;
       adButton.textContent = 'Loading ad…';
-      pokiRewardedBreak({ onPause: suspendAudio, onResume: resumeAudio }).then((success) => {
+      platformRewardedAd({ onPause: suspendAudio, onResume: resumeAudio }).then((success) => {
         if (success) {
           economy.grantBonus(REWARD_AD_BONUS);
           rerender();
