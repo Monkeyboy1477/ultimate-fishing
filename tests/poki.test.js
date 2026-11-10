@@ -1,0 +1,34 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  pokiInit, pokiLoadingFinished, pokiGameplayStart, pokiGameplayStop,
+  pokiCommercialBreak, pokiRewardedBreak,
+} from '../poki.js';
+
+// No `window.PokiSDK` exists in this Node test environment (nor on the itch.io/GitHub Pages
+// builds, which never load the Poki script tag), so every call here must be a safe no-op.
+
+test('pokiInit resolves with no PokiSDK present', async () => {
+  await assert.doesNotReject(pokiInit());
+});
+
+test('pokiLoadingFinished/pokiGameplayStart/pokiGameplayStop never throw with no SDK', () => {
+  assert.doesNotThrow(() => {
+    pokiLoadingFinished();
+    pokiGameplayStart();
+    pokiGameplayStop();
+  });
+});
+
+test('pokiCommercialBreak still pauses/resumes the caller and resolves with no SDK', async () => {
+  const calls = [];
+  await pokiCommercialBreak({ onPause: () => calls.push('pause'), onResume: () => calls.push('resume') });
+  assert.deepEqual(calls, ['resume'], 'onPause is only for muting during a real ad; onResume must still run');
+});
+
+test('pokiRewardedBreak resolves false and still resumes the caller with no SDK', async () => {
+  const calls = [];
+  const success = await pokiRewardedBreak({ onPause: () => calls.push('pause'), onResume: () => calls.push('resume') });
+  assert.equal(success, false, 'no ad played, so no reward should be granted');
+  assert.deepEqual(calls, ['resume']);
+});

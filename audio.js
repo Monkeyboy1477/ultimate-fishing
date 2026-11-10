@@ -238,6 +238,16 @@ function start() {
   });
 }
 
+// Used by Poki's commercial/rewarded breaks: mute during the ad, resume after. No-op before
+// the first user gesture has created ctx (nothing is playing yet anyway).
+export function suspendAudio() {
+  if (ctx && ctx.state === 'running') ctx.suspend();
+}
+
+export function resumeAudio() {
+  if (ctx && ctx.state === 'suspended' && !document.hidden) ctx.resume();
+}
+
 export function installAudio(stageElement) {
   const button = document.createElement('button');
   button.type = 'button';
