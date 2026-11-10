@@ -11,11 +11,13 @@ import { initScene, renderScene3D, resizeScene, spawnSplash3D, initSplitScene, r
 import { renderHUD } from './render.js';
 import {
   initMenus, showCatchResult, updateHUDSummary, updateCurrencyDisplay, createIdleMenuButtons,
-  showModeSelect, showSharedMenu, dismissIdleOrResultPanel,
+  showModeSelect, showSharedMenu, dismissIdleOrResultPanel, showToast,
 } from './ui.js';
 import { createEconomy } from './economy.js';
-import { installAudio } from './audio.js';
+import { installAudio, suspendAudio, resumeAudio } from './audio.js';
 import { installTouchControls, isTouchDevice } from './touchControls.js';
+import { pokiInit, pokiLoadingFinished, pokiGameplayStart, pokiGameplayStop, pokiCommercialBreak } from './poki.js';
+import { checkNewAchievements } from './achievements.js';
 
 const canvas = document.getElementById('game-canvas');
 const gameStage = document.getElementById('game-stage');
@@ -36,6 +38,38 @@ const topBar = {
 const economy = createEconomy();
 const idleMenuButtons = createIdleMenuButtons(gameStage, menuOverlay, economy);
 installAudio(gameStage);
+
+// Called once per economy at the start of a session: grants the daily login bonus (if today's
+// isn't claimed yet) and surfaces any achievement that's newly true -- both as toasts, not
+// blocking panels, so a returning player sees them without an extra click. Also covers
+// achievements that became true in a past session before this feature existed.
+function announceSessionStart(sessionEconomy, label = null) {
+  const prefix = label ? `${label}: ` : '';
+  const bonus = sessionEconomy.claimDailyLoginBonus();
+  if (bonus) showToast(`${prefix}Daily bonus +$${bonus.amount} (day ${bonus.streak} streak)`, 'success');
+  checkNewAchievements(sessionEconomy).forEach((achievement) => {
+    showToast(`${prefix}Achievement unlocked — ${achievement.name} (+$${achievement.reward})`, 'success');
+  });
+}
+
+// Fullscreen toggle: independent of 1P/2P mode, wired once at startup. Hidden entirely when the
+// Fullscreen API isn't available (iOS Safari, or an embedding iframe that blocks it).
+const fullscreenButton = document.getElementById('fullscreen-button');
+if (fullscreenButton) {
+  if (!document.fullscreenEnabled) {
+    fullscreenButton.hidden = true;
+  } else {
+    const updateFullscreenButton = () => {
+      fullscreenButton.textContent = document.fullscreenElement ? 'Exit Fullscreen' : 'Fullscreen';
+    };
+    fullscreenButton.addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      else document.documentElement.requestFullscreen().catch(() => {});
+    });
+    document.addEventListener('fullscreenchange', updateFullscreenButton);
+    updateFullscreenButton();
+  }
+}
 
 const STATE = {
   MENU: 'menu',
@@ -263,6 +297,9 @@ function createPlayerController({ economy, originPoints, menuOverlayElement, sho
             const weight = game.hookedFish.weight;
             const sellPrice = getSellPrice(species, weight);
             const { earned, isRecord, isNewSpecies } = economy.recordCatch(species, weight, sellPrice);
+            checkNewAchievements(economy).forEach((achievement) => {
+              showToast(`Achievement unlocked — ${achievement.name} (+$${achievement.reward})`, 'success');
+            });
             finishFight({ caught: true, species, weight, isRecord, isNewSpecies, soldFor: earned });
           }
           break;
@@ -368,6 +405,22 @@ function bindPlayerKeys(controller, { aimLeftKey, aimRightKey, actionKey, isPaus
 const MAX_AIM_ANGLE_DEG = 40;
 const TOUCH_AIM_DEG_PER_S = 45;
 
+// On Poki the game sits inside a scrollable page; stop arrow keys/space/wheel from scrolling
+// it out from under the player. Harmless on itch.io/GitHub Pages, where the game already fills
+// the viewport and nothing scrolls anyway.
+window.addEventListener('keydown', (e) => {
+  if (['ArrowDown', 'ArrowUp', ' '].includes(e.key)) e.preventDefault();
+});
+window.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
+
+const PLAYING_STATES = new Set([STATE.CHARGING, STATE.CAST_FLIGHT, STATE.WAITING_BITE, STATE.FIGHTING]);
+// Tells Poki whether the player is actively fishing right now vs. idle at a menu/result panel.
+// Safe to call every frame: pokiGameplayStart/Stop only forward an actual state change.
+function syncPokiGameplay(states) {
+  if (states.some((s) => PLAYING_STATES.has(s))) pokiGameplayStart();
+  else pokiGameplayStop();
+}
+
 // Set once mode selection resolves (Step 3); read by fitSceneToCanvas (Step 6) to pick
 // resizeScene vs resizeSplitScene, since both setup paths share the same ResizeObserver.
 let twoPlayer = false;
@@ -419,6 +472,8 @@ function tick(now) {
 // ---------------------------------------------------------------------------
 function setupSinglePlayer() {
   initScene(canvas);
+
+  announceSessionStart(economy);
 
   const singlePlayer = createPlayerController({ economy, originPoints: pointsForOffset(0), menuOverlayElement: menuOverlay });
 
@@ -472,6 +527,7 @@ function setupSinglePlayer() {
 
   function render() {
     const frameState = singlePlayer.getFrameState();
+    syncPokiGameplay([frameState.state]);
     renderScene3D(frameState);
 
     renderHUD(hudOverlay, {
@@ -503,7 +559,10 @@ function setupSinglePlayer() {
 
   initMenus(menuOverlay, {
     onStartCast: () => singlePlayer.resetToMenu(),
-    onRestart: () => singlePlayer.returnLureHome(),
+    onRestart: () => {
+      pokiCommercialBreak({ onPause: suspendAudio, onResume: resumeAudio })
+        .then(() => singlePlayer.returnLureHome());
+    },
   }, economy);
 
   fitSceneToCanvas();
@@ -528,6 +587,13 @@ function setupTwoPlayer(economyMode) {
   } else {
     economyP1 = createEconomy('-p1');
     economyP2 = createEconomy('-p2');
+  }
+
+  if (economyMode === 'team') {
+    announceSessionStart(economyP1, 'Team');
+  } else {
+    announceSessionStart(economyP1, 'Player 1');
+    announceSessionStart(economyP2, 'Player 2');
   }
 
   gameStage.classList.add('split-screen');
@@ -555,7 +621,10 @@ function setupTwoPlayer(economyMode) {
 
   initMenus(menuOverlay, {
     onStartCast: () => p1.resetToMenu(),
-    onRestart: () => p1.returnLureHome(),
+    onRestart: () => {
+      pokiCommercialBreak({ onPause: suspendAudio, onResume: resumeAudio })
+        .then(() => p1.returnLureHome());
+    },
   }, economyP1, {
     showShopLinks: false,
     instructionsText: 'Player 1: A/D to aim, hold S to cast and to reel in. Press Escape anytime to open the shared menu (pauses both players).',
@@ -563,7 +632,10 @@ function setupTwoPlayer(economyMode) {
 
   initMenus(menuOverlayP2, {
     onStartCast: () => p2.resetToMenu(),
-    onRestart: () => p2.returnLureHome(),
+    onRestart: () => {
+      pokiCommercialBreak({ onPause: suspendAudio, onResume: resumeAudio })
+        .then(() => p2.returnLureHome());
+    },
   }, economyP2, {
     showShopLinks: false,
     instructionsText: 'Player 2: Left/Right arrows to aim, hold Down arrow to cast and to reel in. Press Escape anytime to open the shared menu (pauses both players).',
@@ -593,8 +665,10 @@ function setupTwoPlayer(economyMode) {
   }
 
   function render() {
+    sharedMenuButton.hidden = pausedForMenu;
     const frameP1 = p1.getFrameState();
     const frameP2 = p2.getFrameState();
+    if (!pausedForMenu) syncPokiGameplay([frameP1.state, frameP2.state]);
     renderSplitScene([frameP1, frameP2]);
 
     renderPlayerHUD(hudOverlay, menuOverlay, frameP1, economyP1);
@@ -625,16 +699,19 @@ function setupTwoPlayer(economyMode) {
   let savedMenuWasActive = false;
 
   function closeSharedMenu() {
-    menuOverlay.innerHTML = '';
-    savedMenuChildren.forEach((node) => menuOverlay.appendChild(node));
-    menuOverlay.classList.toggle('active', savedMenuWasActive);
-    gameStage.classList.remove('shared-menu-open');
-    savedMenuChildren = [];
-    pausedForMenu = false;
+    pokiCommercialBreak({ onPause: suspendAudio, onResume: resumeAudio }).then(() => {
+      menuOverlay.innerHTML = '';
+      savedMenuChildren.forEach((node) => menuOverlay.appendChild(node));
+      menuOverlay.classList.toggle('active', savedMenuWasActive);
+      gameStage.classList.remove('shared-menu-open');
+      savedMenuChildren = [];
+      pausedForMenu = false;
+    });
   }
 
   function openSharedMenu() {
     pausedForMenu = true;
+    pokiGameplayStop();
     savedMenuChildren = Array.from(menuOverlay.childNodes);
     savedMenuWasActive = menuOverlay.classList.contains('active');
     gameStage.classList.add('shared-menu-open');
@@ -652,20 +729,37 @@ function setupTwoPlayer(economyMode) {
     else openSharedMenu();
   });
 
+  // A visible, clickable equivalent of the Escape key: the shared menu (Shop/Fish Book/
+  // Maps/Achievements, both players paused) was previously keyboard-only and easy to never
+  // discover. Shown at all times during 2P play, not just when idle (unlike idleMenuButtons,
+  // which only ever applies to single-player). Hidden while the shared menu is already open,
+  // since it'd otherwise sit underneath that overlay doing nothing.
+  const sharedMenuButton = document.createElement('button');
+  sharedMenuButton.type = 'button';
+  sharedMenuButton.id = 'shared-menu-button';
+  sharedMenuButton.className = 'menu-button menu-button-secondary';
+  sharedMenuButton.textContent = 'Menu / Shop';
+  sharedMenuButton.addEventListener('click', openSharedMenu);
+  gameStage.appendChild(sharedMenuButton);
+
   fitSceneToCanvas();
 }
 
-showModeSelect(menuOverlay, (choice) => {
-  if (choice.mode === '1p') {
-    setupSinglePlayer();
-  } else {
-    setupTwoPlayer(choice.economyMode);
-  }
-});
+pokiInit().then(() => {
+  pokiLoadingFinished();
 
-requestAnimationFrame((t) => {
-  lastTime = t;
-  requestAnimationFrame(tick);
+  showModeSelect(menuOverlay, (choice) => {
+    if (choice.mode === '1p') {
+      setupSinglePlayer();
+    } else {
+      setupTwoPlayer(choice.economyMode);
+    }
+  });
+
+  requestAnimationFrame((t) => {
+    lastTime = t;
+    requestAnimationFrame(tick);
+  });
 });
 
 export { STATE, FISH_SPECIES };

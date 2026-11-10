@@ -5,6 +5,9 @@ import { FISH_SPECIES, RARITY_TIER_NAMES, canLureHook } from './fish.js';
 import { mapsForSpecies } from './maps.js';
 import { fishThumbnail } from './scene3d.js';
 import { isTouchDevice } from './touchControls.js';
+import { ACHIEVEMENTS } from './achievements.js';
+import { pokiRewardedBreak, pokiAvailable } from './poki.js';
+import { suspendAudio, resumeAudio } from './audio.js';
 
 // Per-overlay state (callbacks/economy/current panel), keyed by menuOverlayElement so a 2P
 // session can call initMenus/showCatchResult twice (once per player's own overlay) without
@@ -19,7 +22,26 @@ function getMenuState(menuOverlayElement) {
   return state;
 }
 
-const MENU_SCREENS = [['Shop', showShop], ['Fish Book', showBook], ['Maps', showMaps]];
+const MENU_SCREENS = [['Shop', showShop], ['Fish Book', showBook], ['Maps', showMaps], ['Achievements', showAchievements]];
+
+// ---------------------------------------------------------------------------
+// Toasts — brief top-of-screen notices (daily bonus, achievement unlocks) that don't
+// block input and clear themselves. #toast-stack is a fixed-position flex column in
+// index.html; each toast is its own element so several queued in the same tick just stack.
+// ---------------------------------------------------------------------------
+export function showToast(message, variant = 'info') {
+  const stack = document.getElementById('toast-stack');
+  if (!stack) return;
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${variant}`;
+  toast.textContent = message;
+  stack.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast-visible'));
+  setTimeout(() => {
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 400);
+  }, 4500);
+}
 
 // Adds Shop / Fish Book / Maps buttons. onClose runs when any of those screens closes.
 function appendMenuButtons(container, menuOverlayElement, getEconomy, onClose, beforeOpen) {
@@ -226,6 +248,7 @@ export function showModeSelect(menuOverlayElement, onChoose) {
 
 const CATEGORY_LABELS = { rod: 'Rods', line: 'Lines', lure: 'Lures' };
 let activeShopCategory = 'rod';
+const REWARD_AD_BONUS = 50;
 
 function gearStatText(category, tier) {
   if (category === 'rod') return `Cast reach: ${tier.maxDistance} m`;
@@ -307,6 +330,30 @@ function buildShopPanel(economy, onClose) {
     const fresh = buildShopPanel(economy, onClose);
     panel.replaceWith(fresh);
   };
+
+  // Only rendered on the Poki build (pokiAvailable() is false everywhere else), since
+  // pokiRewardedBreak has no real ad to show without that SDK.
+  if (pokiAvailable()) {
+    const adButton = document.createElement('button');
+    adButton.type = 'button';
+    adButton.className = 'menu-button menu-button-secondary ad-reward-button';
+    const defaultLabel = `Watch an Ad for +$${REWARD_AD_BONUS}`;
+    adButton.textContent = defaultLabel;
+    adButton.addEventListener('click', () => {
+      adButton.disabled = true;
+      adButton.textContent = 'Loading ad…';
+      pokiRewardedBreak({ onPause: suspendAudio, onResume: resumeAudio }).then((success) => {
+        if (success) {
+          economy.grantBonus(REWARD_AD_BONUS);
+          rerender();
+        } else {
+          adButton.disabled = false;
+          adButton.textContent = defaultLabel;
+        }
+      });
+    });
+    panel.appendChild(adButton);
+  }
 
   const tabs = document.createElement('div');
   tabs.className = 'gear-tabs';
@@ -560,10 +607,83 @@ export function showMaps(menuOverlayElement, economy, onClose) {
 }
 
 // ---------------------------------------------------------------------------
+// Achievements
+// ---------------------------------------------------------------------------
+
+function buildAchievementCard(achievement, economy) {
+  const unlocked = economy.isAchievementUnlocked(achievement.id);
+  const card = document.createElement('div');
+  card.className = `gear-card${unlocked ? ' gear-card-equipped' : ''}`;
+
+  const name = document.createElement('div');
+  name.className = 'gear-card-name';
+  name.textContent = unlocked ? achievement.name : '???';
+  card.appendChild(name);
+
+  const desc = document.createElement('div');
+  desc.className = 'gear-card-desc';
+  desc.textContent = unlocked ? achievement.description : 'Not unlocked yet.';
+  card.appendChild(desc);
+
+  const reward = document.createElement('div');
+  reward.className = 'gear-card-stat';
+  reward.textContent = `Reward: $${achievement.reward}`;
+  card.appendChild(reward);
+
+  const status = document.createElement('div');
+  status.className = 'gear-card-price';
+  status.textContent = unlocked ? 'Unlocked' : 'Locked';
+  card.appendChild(status);
+
+  return card;
+}
+
+function buildAchievementsPanel(economy, onClose) {
+  const panel = document.createElement('div');
+  panel.className = 'menu-panel menu-panel-shop';
+
+  const title = document.createElement('h2');
+  title.className = 'menu-panel-title';
+  title.textContent = 'Achievements';
+  panel.appendChild(title);
+
+  const unlockedCount = ACHIEVEMENTS.filter((a) => economy.isAchievementUnlocked(a.id)).length;
+  const progress = document.createElement('p');
+  progress.className = 'menu-panel-note';
+  progress.textContent = `${unlockedCount} of ${ACHIEVEMENTS.length} unlocked`;
+  panel.appendChild(progress);
+
+  const row = document.createElement('div');
+  row.className = 'gear-card-row';
+  ACHIEVEMENTS.forEach((achievement) => row.appendChild(buildAchievementCard(achievement, economy)));
+  panel.appendChild(row);
+
+  const closeButton = document.createElement('button');
+  closeButton.type = 'button';
+  closeButton.className = 'menu-button';
+  closeButton.textContent = 'Close';
+  closeButton.addEventListener('click', onClose);
+  panel.appendChild(closeButton);
+
+  return panel;
+}
+
+export function showAchievements(menuOverlayElement, economy, onClose) {
+  menuOverlayElement.innerHTML = '';
+  menuOverlayElement.appendChild(buildAchievementsPanel(economy, onClose));
+  menuOverlayElement.classList.add('active');
+}
+
+// ---------------------------------------------------------------------------
 // Shared 2P menu (Player tabs + Shop/Fish Book/Maps for the selected player)
 // ---------------------------------------------------------------------------
 
-const SHARED_MENU_SCREENS = [['shop', 'Shop', buildShopPanel], ['book', 'Fish Book', buildBookPanel], ['maps', 'Maps', buildMapsPanel]];
+const SHARED_MENU_SCREENS = [
+  ['shop', 'Shop', buildShopPanel],
+  ['book', 'Fish Book', buildBookPanel],
+  ['maps', 'Maps', buildMapsPanel],
+  ['achievements', 'Achievements', buildAchievementsPanel],
+];
 
 export function showSharedMenu(menuOverlayElement, players, onClose) {
   let activeIndex = 0;

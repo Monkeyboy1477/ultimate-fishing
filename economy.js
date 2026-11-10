@@ -97,6 +97,18 @@ export const LURE_TIERS = [
 const GEAR_TABLES = { rod: ROD_TIERS, line: LINE_TIERS, lure: LURE_TIERS };
 const STARTING_CURRENCY = 25;
 
+// --- Daily login bonus --------------------------------------------------------
+// Grants on the first claimDailyLoginBonus() call of each real-world day (player's local
+// time), so it fires once per session for a fresh day and never again until the next one.
+// The streak resets to 1 instead of continuing when a day was missed.
+const DAILY_BONUS_BASE = 20;
+const DAILY_BONUS_PER_STREAK_DAY = 5;
+const DAILY_BONUS_STREAK_CAP = 6; // streak day 7+ stops adding more, so the bonus tops out at $50
+
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 function findTier(category, id) {
   return GEAR_TABLES[category].find((tier) => tier.id === id) || GEAR_TABLES[category][0];
 }
@@ -114,6 +126,9 @@ function defaultState() {
     collection: {}, // speciesId -> { count, bestWeight }, shown in the Fish Book
     ownedMaps: [STARTING_MAP_ID],
     currentMap: STARTING_MAP_ID,
+    achievements: [], // unlocked achievement ids, see achievements.js
+    lastLoginDate: null, // dateKey() string; null means the daily bonus has never been claimed
+    loginStreak: 0,
   };
 }
 
@@ -143,6 +158,9 @@ function loadState(saveKey) {
       collection: parsed.collection ?? seedCollection({ ...base.stats, ...parsed.stats }),
       ownedMaps: Array.isArray(parsed.ownedMaps) ? parsed.ownedMaps : base.ownedMaps,
       currentMap: getMap(parsed.currentMap) ? parsed.currentMap : base.currentMap,
+      achievements: Array.isArray(parsed.achievements) ? parsed.achievements : base.achievements,
+      lastLoginDate: typeof parsed.lastLoginDate === 'string' ? parsed.lastLoginDate : base.lastLoginDate,
+      loginStreak: typeof parsed.loginStreak === 'number' ? parsed.loginStreak : base.loginStreak,
     };
   } catch {
     return defaultState();
@@ -281,6 +299,47 @@ export function createEconomy(storageKeySuffix = '') {
       };
       persist();
       return { earned: sellPrice, isRecord, isNewSpecies };
+    },
+
+    // Adds currency with no catch/stat side effects (rewarded-ad payouts, achievement rewards).
+    grantBonus(amount) {
+      state.currency += amount;
+      persist();
+    },
+
+    // Call once per session, after the player's real-world day has changed. Returns
+    // { amount, streak } and grants the currency, or null if today's bonus is already claimed.
+    claimDailyLoginBonus() {
+      const today = dateKey(new Date());
+      if (state.lastLoginDate === today) return null;
+      const yesterday = dateKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+      state.loginStreak = state.lastLoginDate === yesterday ? state.loginStreak + 1 : 1;
+      state.lastLoginDate = today;
+      const amount = DAILY_BONUS_BASE + Math.min(state.loginStreak - 1, DAILY_BONUS_STREAK_CAP) * DAILY_BONUS_PER_STREAK_DAY;
+      state.currency += amount;
+      persist();
+      return { amount, streak: state.loginStreak };
+    },
+
+    getLoginStreak() {
+      return state.loginStreak;
+    },
+
+    isAchievementUnlocked(id) {
+      return state.achievements.includes(id);
+    },
+
+    getUnlockedAchievementIds() {
+      return state.achievements;
+    },
+
+    // Returns false if already unlocked (no double-grant), true once newly unlocked.
+    unlockAchievement(id, reward) {
+      if (state.achievements.includes(id)) return false;
+      state.achievements.push(id);
+      state.currency += reward;
+      persist();
+      return true;
     },
   };
 }

@@ -35,6 +35,65 @@ body {
 
 #hud-summary span { margin-left: 16px; font-size: 0.9rem; }
 
+#fullscreen-button {
+  margin-left: 16px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  vertical-align: middle;
+}
+#fullscreen-button[hidden] { display: none; }
+/* Touch layouts already fill the screen edge-to-edge and the top bar is already cramped
+   there (see .touch #top-bar below), so the button would only crowd it for little benefit. */
+.touch #fullscreen-button { display: none; }
+
+/* --- main.js/ui.js: toasts (daily bonus, achievement unlocks) --- */
+#toast-stack {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background: rgba(15, 32, 39, 0.95);
+  border: 1px solid var(--color-ui-accent);
+  border-radius: 6px;
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.3s, transform 0.3s;
+  max-width: min(420px, 90vw);
+  text-align: center;
+}
+
+.toast-visible { opacity: 1; transform: translateY(0); }
+
+/* --- main.js: 2P shared-menu quick-access button (visible equivalent of Escape) --- */
+#shared-menu-button {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  background: rgba(15, 32, 39, 0.75);
+}
+#shared-menu-button[hidden] { display: none; }
+
+/* --- ui.js: shop panel rewarded-ad button --- */
+.ad-reward-button { margin-bottom: 10px; }
+
 .ad-slot {
   display: flex;
   align-items: center;
